@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="192" height="192" viewBox="0 0 512 512">
+<rect width="512" height="512" rx="110" fill="#08111f"/>
+<path d="M96 346L190 250l66 56 112-140" fill="none" stroke="#3b82f6" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="368" cy="166" r="22" fill="#22c55e"/>
+<text x="256" y="430" text-anchor="middle" fill="#f8fafc" font-family="Arial,sans-serif" font-size="70" font-weight="700">WCM</text>
+</svg>
