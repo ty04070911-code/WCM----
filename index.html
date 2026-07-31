@@ -1,0 +1,1365 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f172a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="WCM Analyzer">
+  <title>WCM Analyzer Pro</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+
+  <style>
+    :root {
+      --bg: #08111f;
+      --panel: #111c2e;
+      --panel-2: #17243a;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --line: #2b3b55;
+      --blue: #3b82f6;
+      --green: #22c55e;
+      --orange: #f59e0b;
+      --red: #ef4444;
+      --purple: #a855f7;
+      --radius: 18px;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 15% -10%, #18365e 0, transparent 32%),
+        var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans",
+                   "Yu Gothic", "Segoe UI", sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .app {
+      width: min(100%, 840px);
+      margin: 0 auto;
+      padding:
+        calc(env(safe-area-inset-top) + 24px)
+        16px
+        calc(env(safe-area-inset-bottom) + 42px);
+    }
+
+    header { margin-bottom: 24px; }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(30px, 8vw, 48px);
+      letter-spacing: -0.04em;
+    }
+
+    .version {
+      display: inline-block;
+      margin-top: 8px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(59, 130, 246, .15);
+      color: #93c5fd;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .lead {
+      color: var(--muted);
+      line-height: 1.75;
+      margin: 16px 0 0;
+    }
+
+    .panel {
+      background: rgba(17, 28, 46, .94);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 18px;
+      margin-bottom: 16px;
+      box-shadow: 0 14px 38px rgba(0, 0, 0, .18);
+    }
+
+    .panel h2 {
+      margin: 0 0 16px;
+      font-size: 21px;
+    }
+
+    .field { margin-bottom: 16px; }
+
+    label {
+      display: block;
+      color: #dbeafe;
+      margin-bottom: 8px;
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    input, select, button {
+      width: 100%;
+      min-height: 48px;
+      border-radius: 12px;
+      font: inherit;
+    }
+
+    input, select {
+      border: 1px solid #40516d;
+      background: #f8fafc;
+      color: #0f172a;
+      padding: 11px 13px;
+      font-size: 16px;
+    }
+
+    input[type="file"] {
+      padding: 9px;
+      background: #eaf2ff;
+    }
+
+    input:focus, select:focus {
+      outline: 3px solid rgba(59, 130, 246, .28);
+      border-color: var(--blue);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .btn {
+      border: 0;
+      padding: 13px 16px;
+      color: white;
+      font-weight: 800;
+      cursor: pointer;
+      transition: transform .12s ease, opacity .12s ease;
+    }
+
+    .btn:active { transform: scale(.985); }
+    .btn:disabled { opacity: .45; cursor: not-allowed; }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #2563eb, #3b82f6);
+    }
+
+    .btn-secondary {
+      background: linear-gradient(135deg, #334155, #475569);
+    }
+
+    .btn-green {
+      background: linear-gradient(135deg, #15803d, #22c55e);
+    }
+
+    .status {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+      word-break: break-word;
+    }
+
+    .success { color: #86efac; }
+    .error { color: #fca5a5; }
+
+    #results[hidden] { display: none; }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .card {
+      background: var(--panel-2);
+      border: 1px solid var(--line);
+      border-radius: 15px;
+      padding: 14px;
+    }
+
+    .card-title {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .card-value {
+      margin-top: 7px;
+      font-size: clamp(19px, 5vw, 28px);
+      font-weight: 900;
+      word-break: break-word;
+    }
+
+    .card-sub {
+      color: #cbd5e1;
+      margin-top: 6px;
+      font-size: 12px;
+    }
+
+    .positive { color: #86efac; }
+    .negative { color: #fca5a5; }
+
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 520px;
+      background: #101b2d;
+    }
+
+    th, td {
+      text-align: right;
+      padding: 11px 12px;
+      border-bottom: 1px solid var(--line);
+      font-size: 13px;
+    }
+
+    th:first-child, td:first-child { text-align: left; }
+    th { color: #bfdbfe; background: #17243a; }
+    tr:last-child td { border-bottom: 0; }
+
+    .chart-box {
+      position: relative;
+      min-height: 330px;
+      background: #f8fafc;
+      border-radius: 14px;
+      padding: 10px;
+      margin-top: 12px;
+    }
+
+    .forecast-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .forecast {
+      background: #17243a;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 13px;
+    }
+
+    .forecast strong {
+      display: block;
+      font-size: 18px;
+      margin: 5px 0;
+    }
+
+    .comment {
+      background: #132038;
+      border-left: 4px solid var(--blue);
+      border-radius: 12px;
+      padding: 14px;
+      color: #dbeafe;
+      line-height: 1.75;
+      white-space: pre-line;
+    }
+
+    .notice {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.7;
+    }
+
+    @media (max-width: 620px) {
+      .grid, .cards { grid-template-columns: 1fr; }
+      .forecast-grid { grid-template-columns: 1fr; }
+      .chart-box { min-height: 280px; }
+    }
+  </style>
+</head>
+
+<body>
+<main class="app">
+  <header>
+    <h1>WCM Analyzer Pro</h1>
+    <span class="version">iPhone Web Edition Ver.1</span>
+    <p class="lead">
+      予想分配型・資産成長型のCSVをiPhone内で解析し、
+      分配金受取・再投資・資産成長型を比較します。
+      CSVの内容は端末内で処理され、サーバーへ送信されません。
+    </p>
+  </header>
+
+  <section class="panel">
+    <h2>1. CSVファイル</h2>
+
+    <div class="field">
+      <label for="distributionFile">予想分配型CSV</label>
+      <input id="distributionFile" type="file" accept=".csv,text/csv">
+      <div id="distributionStatus" class="status">未選択</div>
+    </div>
+
+    <div class="field">
+      <label for="growthFile">資産成長型CSV</label>
+      <input id="growthFile" type="file" accept=".csv,text/csv">
+      <div id="growthStatus" class="status">未選択</div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>2. 投資条件</h2>
+
+    <div class="grid">
+      <div class="field">
+        <label for="startDate">開始日</label>
+        <input id="startDate" type="date">
+      </div>
+
+      <div class="field">
+        <label for="initialAmount">初期投資額</label>
+        <input id="initialAmount" type="number" min="0" step="1000" value="100000">
+      </div>
+
+      <div class="field">
+        <label for="monthlyAmount">毎月積立額</label>
+        <input id="monthlyAmount" type="number" min="0" step="1000" value="10000">
+      </div>
+
+      <div class="field">
+        <label for="preferredDay">毎月の積立日</label>
+        <input id="preferredDay" type="number" min="1" max="28" value="1">
+      </div>
+
+      <div class="field">
+        <label for="taxMode">分配金の税設定</label>
+        <select id="taxMode">
+          <option value="after" selected>税引後</option>
+          <option value="before">税引前</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="taxRate">税率（%）</label>
+        <input id="taxRate" type="number" min="0" max="100" step="0.001" value="20.315">
+      </div>
+    </div>
+
+    <button id="analyzeButton" class="btn btn-primary" disabled>
+      分析を開始
+    </button>
+    <div id="appStatus" class="status">2つのCSVを選択してください。</div>
+  </section>
+
+  <section id="results" hidden>
+    <section class="panel">
+      <h2>3. 運用結果</h2>
+      <div id="summaryCards" class="cards"></div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>方式</th>
+              <th>投資元本</th>
+              <th>現在価値</th>
+              <th>損益</th>
+              <th>損益率</th>
+            </tr>
+          </thead>
+          <tbody id="comparisonBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>4. 資産推移</h2>
+      <div class="chart-box">
+        <canvas id="assetChart"></canvas>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>5. 基準価額比較</h2>
+      <div class="chart-box">
+        <canvas id="navChart"></canvas>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>6. リスク分析</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>指標</th>
+              <th>予想分配型</th>
+              <th>資産成長型</th>
+            </tr>
+          </thead>
+          <tbody id="riskBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>7. 将来予測</h2>
+      <div id="forecastGrid" class="forecast-grid"></div>
+      <p class="notice">
+        過去の平均日次収益率と変動率を基にした統計的な参考値です。
+        将来の値動きや分配金を保証するものではありません。
+      </p>
+    </section>
+
+    <section class="panel">
+      <h2>8. データ分析コメント</h2>
+      <div id="analysisComment" class="comment"></div>
+    </section>
+
+    <section class="panel">
+      <h2>9. 結果保存</h2>
+      <button id="downloadButton" class="btn btn-green">
+        結果CSVを保存
+      </button>
+    </section>
+
+    <section class="panel">
+      <p class="notice">
+        本アプリは学習・参考用途のシミュレーターです。
+        手数料、信託報酬の個別差、NISA、普通分配・特別分配の個別元本、
+        税務、約定日の差、端数処理などは完全には再現していません。
+      </p>
+    </section>
+  </section>
+</main>
+
+<script>
+"use strict";
+
+let distributionData = null;
+let growthData = null;
+let latestMergedHistory = [];
+let assetChartInstance = null;
+let navChartInstance = null;
+
+const yen = value =>
+  new Intl.NumberFormat("ja-JP", {
+    style: "currency",
+    currency: "JPY",
+    maximumFractionDigits: 0
+  }).format(Number(value || 0));
+
+const pct = value =>
+  `${Number(value || 0) >= 0 ? "+" : ""}${Number(value || 0).toFixed(2)}%`;
+
+function decodeArrayBuffer(buffer) {
+  const encodings = ["shift-jis", "utf-8"];
+
+  for (const encoding of encodings) {
+    try {
+      const text = new TextDecoder(encoding, { fatal: false }).decode(buffer);
+      if (text.includes("年月日") || text.includes("基準価額")) return text;
+    } catch (_) {}
+  }
+
+  return new TextDecoder("utf-8").decode(buffer);
+}
+
+function parseCsvLine(line) {
+  const values = [];
+  let current = "";
+  let quoted = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    const next = line[i + 1];
+
+    if (char === '"' && quoted && next === '"') {
+      current += '"';
+      i++;
+    } else if (char === '"') {
+      quoted = !quoted;
+    } else if (char === "," && !quoted) {
+      values.push(current.trim());
+      current = "";
+    } else {
+      current += char;
+    }
+  }
+
+  values.push(current.trim());
+  return values;
+}
+
+function parseCsvText(text) {
+  const lines = text
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .filter(line => line.trim() !== "");
+
+  let headerIndex = lines.findIndex(line =>
+    line.includes("年月日") || line.toLowerCase().includes("date")
+  );
+
+  if (headerIndex < 0) headerIndex = 0;
+
+  const rows = [];
+
+  for (let i = headerIndex + 1; i < lines.length; i++) {
+    const cols = parseCsvLine(lines[i]);
+
+    if (cols.length < 2) continue;
+
+    const date = parseDate(cols[0]);
+    const nav = parseNumber(cols[1]);
+
+    if (!date || !Number.isFinite(nav)) continue;
+
+    rows.push({
+      date,
+      dateText: formatDate(date),
+      nav,
+      reinvestNav: parseNumber(cols[2]),
+      assets: parseNumber(cols[3]),
+      distribution: parseNumber(cols[4]) || 0
+    });
+  }
+
+  rows.sort((a, b) => a.date - b.date);
+  return rows;
+}
+
+function parseDate(value) {
+  const text = String(value || "").trim();
+  const normalized = text
+    .replace(/年/g, "/")
+    .replace(/月/g, "/")
+    .replace(/日/g, "")
+    .replace(/\./g, "/")
+    .replace(/-/g, "/");
+
+  const parts = normalized.split("/").map(Number);
+
+  if (parts.length >= 3 && parts.every(Number.isFinite)) {
+    return new Date(parts[0], parts[1] - 1, parts[2]);
+  }
+
+  if (/^\d{8}$/.test(text)) {
+    return new Date(
+      Number(text.slice(0, 4)),
+      Number(text.slice(4, 6)) - 1,
+      Number(text.slice(6, 8))
+    );
+  }
+
+  const date = new Date(text);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function parseNumber(value) {
+  const cleaned = String(value ?? "")
+    .replace(/,/g, "")
+    .replace(/[円¥￥\s]/g, "")
+    .trim();
+
+  if (cleaned === "" || cleaned === "-") return NaN;
+
+  const result = Number(cleaned);
+  return Number.isFinite(result) ? result : NaN;
+}
+
+function formatDate(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}/${m}/${d}`;
+}
+
+async function loadFile(input, kind) {
+  const file = input.files[0];
+  const status = document.getElementById(
+    kind === "distribution" ? "distributionStatus" : "growthStatus"
+  );
+
+  if (!file) return;
+
+  try {
+    status.className = "status";
+    status.textContent = "読み込み中…";
+
+    const buffer = await file.arrayBuffer();
+    const text = decodeArrayBuffer(buffer);
+    const rows = parseCsvText(text);
+
+    if (rows.length < 10) {
+      throw new Error("有効なデータを十分に読み込めませんでした。");
+    }
+
+    if (kind === "distribution") {
+      distributionData = rows;
+    } else {
+      growthData = rows;
+    }
+
+    status.className = "status success";
+    status.textContent =
+      `${file.name}：${rows.length.toLocaleString()}件読み込み完了`;
+
+    setDefaultStartDate();
+    updateAnalyzeButton();
+  } catch (error) {
+    status.className = "status error";
+    status.textContent = `読込失敗：${error.message}`;
+  }
+}
+
+function setDefaultStartDate() {
+  if (!distributionData || !growthData) return;
+
+  const start = new Date(
+    Math.max(
+      distributionData[0].date.getTime(),
+      growthData[0].date.getTime()
+    )
+  );
+
+  const input = document.getElementById("startDate");
+
+  if (!input.value) {
+    input.value = formatDate(start).replace(/\//g, "-");
+  }
+}
+
+function updateAnalyzeButton() {
+  const ready = Boolean(distributionData && growthData);
+  document.getElementById("analyzeButton").disabled = !ready;
+  document.getElementById("appStatus").textContent =
+    ready ? "分析できます。" : "2つのCSVを選択してください。";
+}
+
+function filterByPeriod(rows, startTime, endTime) {
+  return rows.filter(row => {
+    const t = row.date.getTime();
+    return t >= startTime && t <= endTime;
+  });
+}
+
+function createInvestmentMap(rows, initial, monthly, preferredDay) {
+  const map = new Map();
+
+  if (initial > 0) {
+    map.set(rows[0].dateText, initial);
+  }
+
+  const groups = new Map();
+
+  for (const row of rows) {
+    const key = `${row.date.getFullYear()}-${row.date.getMonth() + 1}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(row);
+  }
+
+  const keys = [...groups.keys()];
+
+  for (let i = 1; i < keys.length; i++) {
+    if (monthly <= 0) break;
+
+    const monthRows = groups.get(keys[i]);
+    const selected =
+      monthRows.find(row => row.date.getDate() >= preferredDay) ||
+      monthRows[monthRows.length - 1];
+
+    map.set(
+      selected.dateText,
+      (map.get(selected.dateText) || 0) + monthly
+    );
+  }
+
+  return map;
+}
+
+function simulateDistribution(rows, initial, monthly, preferredDay, taxRate) {
+  const investments = createInvestmentMap(
+    rows, initial, monthly, preferredDay
+  );
+
+  let receiveUnits = 0;
+  let reinvestUnits = 0;
+  let principal = 0;
+  let receivedCash = 0;
+  let tax = 0;
+
+  const history = [];
+  const taxMultiplier = 1 - taxRate / 100;
+
+  for (const row of rows) {
+    const amount = investments.get(row.dateText) || 0;
+
+    if (amount > 0 && row.nav > 0) {
+      const units = amount / row.nav * 10000;
+      receiveUnits += units;
+      reinvestUnits += units;
+      principal += amount;
+    }
+
+    if (row.distribution > 0) {
+      const grossReceive =
+        receiveUnits * row.distribution / 10000;
+      const netReceive = grossReceive * taxMultiplier;
+
+      receivedCash += netReceive;
+      tax += grossReceive - netReceive;
+
+      const reinvestCash =
+        reinvestUnits * row.distribution / 10000 * taxMultiplier;
+
+      if (row.nav > 0) {
+        reinvestUnits += reinvestCash / row.nav * 10000;
+      }
+    }
+
+    const receiveMarketValue = receiveUnits * row.nav / 10000;
+    const receiveTotalValue = receiveMarketValue + receivedCash;
+    const reinvestValue = reinvestUnits * row.nav / 10000;
+
+    history.push({
+      date: row.date,
+      dateText: row.dateText,
+      principal,
+      receiveMarketValue,
+      receivedCash,
+      receiveTotalValue,
+      reinvestValue,
+      tax
+    });
+  }
+
+  return {
+    principal,
+    receiveUnits,
+    reinvestUnits,
+    receiveMarketValue: history.at(-1).receiveMarketValue,
+    receivedCash,
+    receiveTotalValue: history.at(-1).receiveTotalValue,
+    reinvestValue: history.at(-1).reinvestValue,
+    tax,
+    history
+  };
+}
+
+function simulateGrowth(rows, initial, monthly, preferredDay) {
+  const investments = createInvestmentMap(
+    rows, initial, monthly, preferredDay
+  );
+
+  let units = 0;
+  let principal = 0;
+  const history = [];
+
+  for (const row of rows) {
+    const amount = investments.get(row.dateText) || 0;
+
+    if (amount > 0 && row.nav > 0) {
+      units += amount / row.nav * 10000;
+      principal += amount;
+    }
+
+    history.push({
+      date: row.date,
+      dateText: row.dateText,
+      principal,
+      value: units * row.nav / 10000
+    });
+  }
+
+  return {
+    units,
+    principal,
+    value: history.at(-1).value,
+    history
+  };
+}
+
+function dailyReturns(rows) {
+  const values = [];
+
+  for (let i = 1; i < rows.length; i++) {
+    const prev = rows[i - 1].nav;
+    const current = rows[i].nav;
+
+    if (prev > 0 && current > 0) {
+      values.push(current / prev - 1);
+    }
+  }
+
+  return values;
+}
+
+function mean(values) {
+  return values.reduce((sum, value) => sum + value, 0) /
+    Math.max(values.length, 1);
+}
+
+function standardDeviation(values) {
+  if (values.length < 2) return 0;
+
+  const avg = mean(values);
+  const variance =
+    values.reduce((sum, value) => sum + (value - avg) ** 2, 0) /
+    (values.length - 1);
+
+  return Math.sqrt(variance);
+}
+
+function calculateCagr(rows) {
+  if (rows.length < 2) return 0;
+
+  const start = rows[0].nav;
+  const end = rows.at(-1).nav;
+  const days =
+    (rows.at(-1).date - rows[0].date) / 86400000;
+
+  if (start <= 0 || end <= 0 || days <= 0) return 0;
+
+  return ((end / start) ** (365.25 / days) - 1) * 100;
+}
+
+function calculateMaxDrawdown(rows) {
+  let high = -Infinity;
+  let worst = 0;
+
+  for (const row of rows) {
+    high = Math.max(high, row.nav);
+    const drawdown = row.nav / high - 1;
+    worst = Math.min(worst, drawdown);
+  }
+
+  return worst * 100;
+}
+
+function calculateVolatility(rows) {
+  const returns = dailyReturns(rows);
+  return standardDeviation(returns) * Math.sqrt(252) * 100;
+}
+
+function calculateSharpe(rows) {
+  const returns = dailyReturns(rows);
+  const sd = standardDeviation(returns);
+
+  if (sd === 0) return 0;
+
+  return mean(returns) / sd * Math.sqrt(252);
+}
+
+function calculateMonthlyWinRate(rows) {
+  const months = new Map();
+
+  for (const row of rows) {
+    const key = `${row.date.getFullYear()}-${row.date.getMonth()}`;
+    months.set(key, row.nav);
+  }
+
+  const values = [...months.values()];
+  if (values.length < 2) return 0;
+
+  let wins = 0;
+
+  for (let i = 1; i < values.length; i++) {
+    if (values[i] > values[i - 1]) wins++;
+  }
+
+  return wins / (values.length - 1) * 100;
+}
+
+function forecast(rows, horizonDays) {
+  const returns = dailyReturns(rows).slice(-120);
+  const latest = rows.at(-1).nav;
+
+  if (returns.length < 10) {
+    return { center: latest, low: latest, high: latest, up: 50 };
+  }
+
+  const avg = mean(returns);
+  const sd = standardDeviation(returns);
+  const centerReturn = avg * horizonDays;
+  const range = 1.645 * sd * Math.sqrt(horizonDays);
+
+  const center = latest * Math.exp(centerReturn);
+  const low = latest * Math.exp(centerReturn - range);
+  const high = latest * Math.exp(centerReturn + range);
+
+  const z = sd > 0 ? avg * Math.sqrt(horizonDays) / sd : 0;
+  const up = normalCdf(z) * 100;
+
+  return {
+    center: Math.max(center, 0),
+    low: Math.max(low, 0),
+    high: Math.max(high, 0),
+    up: Math.min(Math.max(up, 0), 100)
+  };
+}
+
+function normalCdf(x) {
+  return 0.5 * (1 + erf(x / Math.sqrt(2)));
+}
+
+function erf(x) {
+  const sign = x < 0 ? -1 : 1;
+  x = Math.abs(x);
+
+  const a1 = 0.254829592;
+  const a2 = -0.284496736;
+  const a3 = 1.421413741;
+  const a4 = -1.453152027;
+  const a5 = 1.061405429;
+  const p = 0.3275911;
+
+  const t = 1 / (1 + p * x);
+  const y =
+    1 -
+    (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) *
+    t * Math.exp(-x * x);
+
+  return sign * y;
+}
+
+function mergeHistories(distHistory, growthHistory) {
+  const growthMap = new Map(
+    growthHistory.map(item => [item.dateText, item])
+  );
+
+  return distHistory.map(item => ({
+    ...item,
+    growthValue: growthMap.get(item.dateText)?.value ?? null,
+    growthPrincipal: growthMap.get(item.dateText)?.principal ?? null
+  })).filter(item => item.growthValue !== null);
+}
+
+function makeResult(name, principal, value) {
+  const profit = value - principal;
+  const rate = principal > 0 ? profit / principal * 100 : 0;
+
+  return { name, principal, value, profit, rate };
+}
+
+function renderSummary(results, distResult) {
+  const cards = document.getElementById("summaryCards");
+  const best = [...results].sort((a, b) => b.value - a.value)[0];
+
+  cards.innerHTML = `
+    <div class="card">
+      <div class="card-title">投資元本</div>
+      <div class="card-value">${yen(results[0].principal)}</div>
+      <div class="card-sub">共通投資条件</div>
+    </div>
+    <div class="card">
+      <div class="card-title">最も高い方式</div>
+      <div class="card-value">${best.name}</div>
+      <div class="card-sub">${yen(best.value)}</div>
+    </div>
+    <div class="card">
+      <div class="card-title">累計受取分配金</div>
+      <div class="card-value">${yen(distResult.receivedCash)}</div>
+      <div class="card-sub">税引設定反映後</div>
+    </div>
+    <div class="card">
+      <div class="card-title">推定税額</div>
+      <div class="card-value">${yen(distResult.tax)}</div>
+      <div class="card-sub">簡易計算</div>
+    </div>
+  `;
+
+  document.getElementById("comparisonBody").innerHTML =
+    results.map(result => `
+      <tr>
+        <td>${result.name}</td>
+        <td>${yen(result.principal)}</td>
+        <td>${yen(result.value)}</td>
+        <td class="${result.profit >= 0 ? "positive" : "negative"}">
+          ${yen(result.profit)}
+        </td>
+        <td class="${result.rate >= 0 ? "positive" : "negative"}">
+          ${pct(result.rate)}
+        </td>
+      </tr>
+    `).join("");
+}
+
+function renderRisk(distRows, growthRows) {
+  const metrics = [
+    ["CAGR", calculateCagr(distRows), calculateCagr(growthRows), "%"],
+    ["最大下落率", calculateMaxDrawdown(distRows), calculateMaxDrawdown(growthRows), "%"],
+    ["年率ボラティリティ", calculateVolatility(distRows), calculateVolatility(growthRows), "%"],
+    ["シャープレシオ", calculateSharpe(distRows), calculateSharpe(growthRows), ""],
+    ["月間勝率", calculateMonthlyWinRate(distRows), calculateMonthlyWinRate(growthRows), "%"]
+  ];
+
+  document.getElementById("riskBody").innerHTML =
+    metrics.map(([name, dist, growth, suffix]) => `
+      <tr>
+        <td>${name}</td>
+        <td>${dist.toFixed(2)}${suffix}</td>
+        <td>${growth.toFixed(2)}${suffix}</td>
+      </tr>
+    `).join("");
+
+  return metrics;
+}
+
+function renderForecast(rows) {
+  const definitions = [
+    ["1か月", 21],
+    ["3か月", 63],
+    ["1年", 252]
+  ];
+
+  document.getElementById("forecastGrid").innerHTML =
+    definitions.map(([label, days]) => {
+      const f = forecast(rows, days);
+
+      return `
+        <div class="forecast">
+          <span>${label}後</span>
+          <strong>${Math.round(f.center).toLocaleString()}円</strong>
+          <small>
+            上昇確率 ${f.up.toFixed(1)}%<br>
+            ${Math.round(f.low).toLocaleString()}〜
+            ${Math.round(f.high).toLocaleString()}円
+          </small>
+        </div>
+      `;
+    }).join("");
+}
+
+function renderComment(distRows, growthRows, results) {
+  const distCagr = calculateCagr(distRows);
+  const growthCagr = calculateCagr(growthRows);
+  const distDd = calculateMaxDrawdown(distRows);
+  const distVol = calculateVolatility(distRows);
+  const oneMonth = forecast(distRows, 21);
+  const best = [...results].sort((a, b) => b.value - a.value)[0];
+
+  let tone = "中立";
+  if (oneMonth.up >= 60) tone = "やや強気";
+  if (oneMonth.up <= 40) tone = "やや弱気";
+
+  const comment =
+`現在の統計的な相場判定は「${tone}」です。
+
+比較期間では、予想分配型のCAGRは${distCagr.toFixed(2)}%、資産成長型は${growthCagr.toFixed(2)}%でした。今回の投資条件では「${best.name}」の現在価値が最も高くなっています。
+
+予想分配型の最大下落率は${distDd.toFixed(2)}%、年率ボラティリティは${distVol.toFixed(2)}%です。下落時にも積立を継続できる資金計画か確認してください。
+
+1か月先の上昇確率は${oneMonth.up.toFixed(1)}%と推定されます。ただし、これは過去の値動きを延長した統計モデルであり、ニュース・為替・金利・組入銘柄の業績変化は直接反映していません。`;
+
+  document.getElementById("analysisComment").textContent = comment;
+}
+
+function drawAssetChart(merged) {
+  if (assetChartInstance) assetChartInstance.destroy();
+
+  assetChartInstance = new Chart(
+    document.getElementById("assetChart"),
+    {
+      type: "line",
+      data: {
+        labels: merged.map(item => item.dateText),
+        datasets: [
+          {
+            label: "投資元本",
+            data: merged.map(item => item.principal),
+            borderColor: "#64748b",
+            pointRadius: 0,
+            borderWidth: 2
+          },
+          {
+            label: "分配金受取",
+            data: merged.map(item => item.receiveTotalValue),
+            borderColor: "#f59e0b",
+            pointRadius: 0,
+            borderWidth: 2
+          },
+          {
+            label: "分配金再投資",
+            data: merged.map(item => item.reinvestValue),
+            borderColor: "#3b82f6",
+            pointRadius: 0,
+            borderWidth: 2
+          },
+          {
+            label: "資産成長型",
+            data: merged.map(item => item.growthValue),
+            borderColor: "#22c55e",
+            pointRadius: 0,
+            borderWidth: 2
+          }
+        ]
+      },
+      options: chartOptions("円")
+    }
+  );
+}
+
+function drawNavChart(distRows, growthRows) {
+  if (navChartInstance) navChartInstance.destroy();
+
+  const distStart = distRows[0].nav;
+  const growthStart = growthRows[0].nav;
+
+  navChartInstance = new Chart(
+    document.getElementById("navChart"),
+    {
+      type: "line",
+      data: {
+        labels: distRows.map(item => item.dateText),
+        datasets: [
+          {
+            label: "予想分配型",
+            data: distRows.map(item => item.nav / distStart * 100),
+            borderColor: "#a855f7",
+            pointRadius: 0,
+            borderWidth: 2
+          },
+          {
+            label: "資産成長型",
+            data: growthRows.map(item => item.nav / growthStart * 100),
+            borderColor: "#22c55e",
+            pointRadius: 0,
+            borderWidth: 2
+          }
+        ]
+      },
+      options: chartOptions("開始時=100")
+    }
+  );
+}
+
+function chartOptions(yTitle) {
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: {
+      mode: "index",
+      intersect: false
+    },
+    plugins: {
+      legend: {
+        labels: { color: "#0f172a" }
+      }
+    },
+    scales: {
+      x: {
+        ticks: {
+          color: "#475569",
+          maxTicksLimit: 7
+        },
+        grid: { color: "rgba(148,163,184,.18)" }
+      },
+      y: {
+        title: {
+          display: true,
+          text: yTitle,
+          color: "#475569"
+        },
+        ticks: { color: "#475569" },
+        grid: { color: "rgba(148,163,184,.18)" }
+      }
+    }
+  };
+}
+
+function analyze() {
+  try {
+    const startValue = document.getElementById("startDate").value;
+    const startDate = new Date(`${startValue}T00:00:00`);
+
+    if (Number.isNaN(startDate.getTime())) {
+      throw new Error("開始日を入力してください。");
+    }
+
+    const commonStart = Math.max(
+      startDate.getTime(),
+      distributionData[0].date.getTime(),
+      growthData[0].date.getTime()
+    );
+
+    const commonEnd = Math.min(
+      distributionData.at(-1).date.getTime(),
+      growthData.at(-1).date.getTime()
+    );
+
+    if (commonStart >= commonEnd) {
+      throw new Error("指定期間に共通データがありません。");
+    }
+
+    const distRows = filterByPeriod(
+      distributionData, commonStart, commonEnd
+    );
+
+    const growthRows = filterByPeriod(
+      growthData, commonStart, commonEnd
+    );
+
+    const initial = Number(
+      document.getElementById("initialAmount").value || 0
+    );
+
+    const monthly = Number(
+      document.getElementById("monthlyAmount").value || 0
+    );
+
+    const preferredDay = Number(
+      document.getElementById("preferredDay").value || 1
+    );
+
+    const afterTax =
+      document.getElementById("taxMode").value === "after";
+
+    const taxRate = afterTax
+      ? Number(document.getElementById("taxRate").value || 0)
+      : 0;
+
+    if (initial <= 0 && monthly <= 0) {
+      throw new Error("初期投資額または毎月積立額を入力してください。");
+    }
+
+    if (preferredDay < 1 || preferredDay > 28) {
+      throw new Error("積立日は1〜28で入力してください。");
+    }
+
+    const distResult = simulateDistribution(
+      distRows, initial, monthly, preferredDay, taxRate
+    );
+
+    const growthResult = simulateGrowth(
+      growthRows, initial, monthly, preferredDay
+    );
+
+    const results = [
+      makeResult(
+        "分配金受取",
+        distResult.principal,
+        distResult.receiveTotalValue
+      ),
+      makeResult(
+        "分配金再投資",
+        distResult.principal,
+        distResult.reinvestValue
+      ),
+      makeResult(
+        "資産成長型",
+        growthResult.principal,
+        growthResult.value
+      )
+    ];
+
+    latestMergedHistory = mergeHistories(
+      distResult.history,
+      growthResult.history
+    );
+
+    renderSummary(results, distResult);
+    renderRisk(distRows, growthRows);
+    renderForecast(distRows);
+    renderComment(distRows, growthRows, results);
+    drawAssetChart(latestMergedHistory);
+    drawNavChart(distRows, growthRows);
+
+    document.getElementById("results").hidden = false;
+    document.getElementById("appStatus").className = "status success";
+    document.getElementById("appStatus").textContent =
+      "分析が完了しました。";
+
+    document.getElementById("results").scrollIntoView({
+      behavior: "smooth",
+      block: "start"
+    });
+  } catch (error) {
+    document.getElementById("appStatus").className = "status error";
+    document.getElementById("appStatus").textContent =
+      `分析エラー：${error.message}`;
+  }
+}
+
+function downloadResults() {
+  if (!latestMergedHistory.length) return;
+
+  const headers = [
+    "年月日",
+    "投資元本",
+    "分配型受取_評価額",
+    "累計受取分配金",
+    "分配型受取_合計価値",
+    "分配型再投資_評価額",
+    "推定税額",
+    "資産成長型_評価額"
+  ];
+
+  const rows = latestMergedHistory.map(item => [
+    item.dateText,
+    Math.round(item.principal),
+    Math.round(item.receiveMarketValue),
+    Math.round(item.receivedCash),
+    Math.round(item.receiveTotalValue),
+    Math.round(item.reinvestValue),
+    Math.round(item.tax),
+    Math.round(item.growthValue)
+  ]);
+
+  const csv =
+    "\uFEFF" +
+    [headers, ...rows]
+      .map(row =>
+        row.map(value =>
+          `"${String(value).replace(/"/g, '""')}"`
+        ).join(",")
+      )
+      .join("\n");
+
+  const blob = new Blob([csv], {
+    type: "text/csv;charset=utf-8"
+  });
+
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+
+  anchor.href = url;
+  anchor.download =
+    `WCM_Analyzer_${new Date().toISOString().slice(0, 10)}.csv`;
+
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+document
+  .getElementById("distributionFile")
+  .addEventListener("change", event =>
+    loadFile(event.target, "distribution")
+  );
+
+document
+  .getElementById("growthFile")
+  .addEventListener("change", event =>
+    loadFile(event.target, "growth")
+  );
+
+document
+  .getElementById("analyzeButton")
+  .addEventListener("click", analyze);
+
+document
+  .getElementById("downloadButton")
+  .addEventListener("click", downloadResults);
+
+document
+  .getElementById("taxMode")
+  .addEventListener("change", event => {
+    document.getElementById("taxRate").disabled =
+      event.target.value === "before";
+  });
+</script>
+</body>
+</html>
