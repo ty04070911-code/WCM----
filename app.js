@@ -1,5 +1,5 @@
 "use strict";
-const APP_VERSION="14.0";
+const APP_VERSION="14.1";
 
 /* =========================================================
    Ver.12 Integrated Professional Monte Carlo Engine
@@ -546,6 +546,21 @@ async function load(input,kind){
   }catch(e){el.className="status bad";el.textContent=`読込失敗：${e.message}`}
 }
 function mean(a){return a.reduce((s,v)=>s+v,0)/Math.max(a.length,1)}
+
+function median(values){
+  const clean=(values||[])
+    .filter(Number.isFinite)
+    .slice()
+    .sort((left,right)=>left-right);
+
+  if(!clean.length)return 0;
+
+  const middle=Math.floor(clean.length/2);
+
+  return clean.length%2
+    ?clean[middle]
+    :(clean[middle-1]+clean[middle])/2;
+}
 function sd(a){if(a.length<2)return 0;const m=mean(a);return Math.sqrt(a.reduce((s,v)=>s+(v-m)**2,0)/(a.length-1))}
 function returns(rows){const a=[];for(let i=1;i<rows.length;i++)if(rows[i-1].nav>0)a.push(rows[i].nav/rows[i-1].nav-1);return a}
 function cagr(rows){const days=(rows.at(-1).date-rows[0].date)/86400000;return days>0?((rows.at(-1).nav/rows[0].nav)**(365.25/days)-1)*100:0}
@@ -3052,6 +3067,15 @@ function runRegimeAnalysis(){
       console.error(error);
       status.className="status bad";
       status.textContent=`相場局面分析エラー：${error.message}`;
+      $("regimeCards").innerHTML="";
+      $("regimeGauge").innerHTML="";
+      $("regimeComment").textContent="分析を完了できませんでした。設定とCSVデータを確認してください。";
+      $("regimeModelCards").innerHTML="";
+      $("regimeModelComment").textContent="";
+      $("similarPeriodsTable").innerHTML="";
+      $("similarSummaryCards").innerHTML="";
+      $("similarComment").textContent="";
+      $("similarChart").innerHTML="";
     }
   },40);
 }
