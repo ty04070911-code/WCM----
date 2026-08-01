@@ -1,11 +1,11 @@
-{
-  "name": "WCM Analyzer Pro Ver.5",
+　{
+  "name": "WCM Analyzer Pro Ver.6",
   "short_name": "WCM Analyzer",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#07101d",
   "theme_color": "#08111f",
-  "description": "WCM予想分配型・資産成長型を比較するiPhone向け投資分析アプリ",
+  "description": "実データ型モンテカルロに対応したWCM投資分析アプリ",
   "icons": [
     {
       "src": "./icon-192.svg",
