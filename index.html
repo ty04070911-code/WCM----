@@ -12,15 +12,15 @@
   <meta name="apple-mobile-web-app-title" content="WCM Analyzer">
   <link rel="manifest" href="./manifest.json">
   <link rel="apple-touch-icon" href="./icon-192.svg">
-  <title>WCM Analyzer Pro Ver.13</title>
+  <title>WCM Analyzer Pro Ver.14</title>
 <link rel="stylesheet" href="./style.css?v=8">
 </head>
 <body>
 <main class="app">
 <header>
   <h1>WCM Analyzer Pro</h1>
-  <span class="badge">iPhone Edition Ver.13</span>
-  <p class="lead">CSVは端末内だけで処理します。Ver.12では、Ver.13では、過去の各時点から未来を予測するウォークフォワード検証、モデル別の誤差・的中率・信頼度、精度加重予測を追加しました。</p>
+  <span class="badge">iPhone Edition Ver.14</span>
+  <p class="lead">CSVは端末内だけで処理します。Ver.12では、Ver.14では、現在の相場局面を判定し、過去の似た局面と、その後の値動きを分析するマーケットレジーム機能を追加しました。</p>
 </header>
 
 <section class="panel">
@@ -57,6 +57,7 @@
     <button class="tab" data-page="outlook">今後の見通し</button>
     <button class="tab" data-page="forecast">将来予測</button>
     <button class="tab" data-page="validation">精度検証</button>
+    <button class="tab" data-page="regime">相場局面</button>
     <button class="tab" data-page="monte">モンテカルロ</button>
     <button class="tab" data-page="stress">暴落テスト</button>
     <button class="tab" data-page="fire">FIRE診断</button>
@@ -279,6 +280,79 @@
     <div class="panel">
       <h2>予測と実績の推移</h2>
       <div id="backtestChart" class="chart"></div>
+    </div>
+  </section>
+
+  <section id="regime" class="page" hidden>
+    <div class="panel">
+      <h2>AIマーケットレジーム判定</h2>
+      <p class="small">
+        直近のリターン、トレンド、ボラティリティ、ドローダウンを組み合わせ、
+        現在がどの相場局面に近いかを判定します。
+      </p>
+
+      <div class="grid">
+        <div class="field">
+          <label>判定期間</label>
+          <select id="regimeWindow">
+            <option value="21">短期 21営業日</option>
+            <option value="63" selected>中期 63営業日</option>
+            <option value="126">長期 126営業日</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>類似局面の未来期間</label>
+          <select id="similarHorizon">
+            <option value="21" selected>1か月後</option>
+            <option value="63">3か月後</option>
+            <option value="126">半年後</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>類似局面の件数</label>
+          <select id="similarCount">
+            <option value="3">3件</option>
+            <option value="5" selected>5件</option>
+            <option value="10">10件</option>
+          </select>
+        </div>
+      </div>
+
+      <button id="runRegime" class="primary">相場局面を分析</button>
+      <div id="regimeStatus" class="status" style="margin-top:14px">
+        CSV分析後に「相場局面を分析」を押してください。
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>現在の局面</h2>
+      <div id="regimeCards" class="cards"></div>
+      <div id="regimeGauge" style="margin-top:14px"></div>
+      <div id="regimeComment" class="comment" style="margin-top:14px">
+        局面判定結果をここに表示します。
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>局面別モデル提案</h2>
+      <div id="regimeModelCards" class="cards"></div>
+      <div id="regimeModelComment" class="comment" style="margin-top:14px"></div>
+    </div>
+
+    <div class="panel">
+      <h2>過去の類似局面</h2>
+      <div id="similarPeriodsTable"></div>
+      <div id="similarSummaryCards" class="cards" style="margin-top:14px"></div>
+      <div id="similarComment" class="comment" style="margin-top:14px">
+        類似局面の分析結果をここに表示します。
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>類似度と将来リターン</h2>
+      <div id="similarChart" class="chart"></div>
     </div>
   </section>
 
