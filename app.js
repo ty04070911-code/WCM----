@@ -1,5 +1,5 @@
 "use strict";
-const APP_VERSION="8.0";
+const APP_VERSION="9.0";
 let distData=null,growthData=null,last={};
 const $=id=>document.getElementById(id);
 const yen=v=>new Intl.NumberFormat("ja-JP",{style:"currency",currency:"JPY",maximumFractionDigits:0}).format(Number(v||0));
@@ -321,6 +321,7 @@ function analyze(){
     const rs=[result("分配金受取",ds.principal,ds.total),result("分配金再投資",ds.principal,ds.reinvest),result("資産成長型",gs.principal,gs.value)];
     last={d,g,ds,gs,rs};
     renderWcmDiagnosis(d,rs);
+    renderOutlook();
 
     const best=[...rs].sort((a,b)=>b.value-a.value)[0];
     $("cards").innerHTML=`<div class="card"><div class="card-title">投資元本</div><div class="card-value">${yen(ds.principal)}</div></div><div class="card"><div class="card-title">最も高い方式</div><div class="card-value">${best.name}</div><div class="card-sub">${yen(best.value)}</div></div><div class="card"><div class="card-title">受取分配金</div><div class="card-value">${yen(ds.cash)}</div></div><div class="card"><div class="card-title">推定税額</div><div class="card-value">${yen(ds.tax)}</div></div>`;
@@ -496,6 +497,274 @@ function restoreMarketInputs(){
   }catch(_){}
 }
 
+
+function getSavedMarketInputs(){
+  try{
+    return JSON.parse(localStorage.getItem("wcm8-market")||"null")||{
+      nasdaq:0,sp:0,usdJpy:0,vix:0,growth:0,yieldBp:0
+    }
+  }catch(_){
+    return {nasdaq:0,sp:0,usdJpy:0,vix:0,growth:0,yieldBp:0}
+  }
+}
+
+function calculateExternalReturnAdjustment(market,weightPercent){
+  const raw=
+    market.nasdaq*.24+
+    market.sp*.10+
+    market.growth*.32+
+    market.usdJpy*.16-
+    market.vix*.035-
+    market.yieldBp*.012;
+
+  return raw*(clamp(weightPercent,0,100)/100)
+}
+
+function calculateCrashRisk(rows,market){
+  const oneMonth=recentReturn(rows,21);
+  const quarter=recentReturn(rows,63);
+  const currentDd=rollingDrawdowns(rows).at(-1);
+  const volatility=vol(rows);
+
+  let risk=25;
+  risk+=clamp(-oneMonth,0,20)*1.5;
+  risk+=clamp(-quarter,0,30)*.65;
+  risk+=clamp(-currentDd,0,40)*.8;
+  risk+=clamp(volatility-18,0,35)*.85;
+  risk+=clamp(market.vix,0,60)*.45;
+  risk+=clamp(-market.nasdaq,0,12)*1.2;
+  risk+=clamp(market.yieldBp,0,80)*.12;
+
+  return clamp(risk,0,100)
+}
+
+function calculateActionSignal(rows,market){
+  const wcm=calculateWcmScore(rows);
+  const marketScore=calculateMarketScore(market);
+  const crashRisk=calculateCrashRisk(rows,market);
+  const recent=recentReturn(rows,21);
+
+  let score=
+    wcm.score*.55+
+    marketScore*.25+
+    (100-crashRisk)*.20;
+
+  if(recent>12)score-=10;
+  if(recent<-12)score+=8;
+
+  score=clamp(score,0,100);
+
+  let label="様子見";
+  let code="hold";
+  let detail="通常積立を続け、追加投資は急がない判定です。";
+
+  if(score>=68){
+    label="積立・分割追加";
+    code="buy";
+    detail="過去データと外部環境の組み合わせでは、通常積立の継続と分割追加を検討できる判定です。";
+  }else if(score<38){
+    label="慎重・利益確定も検討";
+    code="take";
+    detail="短期的な下落または過熱のリスクが高く、新規の一括投資は慎重にする判定です。保有比率が大きすぎる場合は一部利益確定も選択肢です。";
+  }
+
+  return {score,label,code,detail,wcm,marketScore,crashRisk}
+}
+
+function calculateOutlook(rows,market,weight,caution){
+  const weekly=forecast(rows,5);
+  const monthly=forecast(rows,21);
+  const adjustment=calculateExternalReturnAdjustment(market,weight);
+
+  let cautionFactor=1;
+  if(caution==="cautious")cautionFactor=.65;
+  if(caution==="optimistic")cautionFactor=1.25;
+
+  const latest=rows.at(-1).nav;
+  const weeklyAdjusted=weekly.center*(1+adjustment/100*.25*cautionFactor);
+  const monthlyAdjusted=monthly.center*(1+adjustment/100*cautionFactor);
+
+  const weeklyReturn=(weeklyAdjusted/latest-1)*100;
+  const monthlyReturn=(monthlyAdjusted/latest-1)*100;
+
+  const weeklyUp=clamp(weekly.up+adjustment*2.2,5,95);
+  const monthlyUp=clamp(monthly.up+adjustment*1.6,5,95);
+
+  return {
+    latest,
+    weekly:{...weekly,center:weeklyAdjusted,returnRate:weeklyReturn,up:weeklyUp},
+    monthly:{...monthly,center:monthlyAdjusted,returnRate:monthlyReturn,up:monthlyUp},
+    adjustment
+  }
+}
+
+function outlookLabel(returnRate){
+  if(returnRate>=2)return {label:"上昇寄り",className:"outlook-up"};
+  if(returnRate<=-2)return {label:"下落寄り",className:"outlook-down"};
+  return {label:"横ばい",className:"outlook-flat"}
+}
+
+function renderOutlook(){
+  if(!last.d)return;
+
+  const market=getMarketInputs();
+  const weight=+$("marketWeight").value||40;
+  const caution=$("forecastCaution").value;
+  const outlook=calculateOutlook(last.d,market,weight,caution);
+  const weeklyLabel=outlookLabel(outlook.weekly.returnRate);
+  const monthlyLabel=outlookLabel(outlook.monthly.returnRate);
+  const action=calculateActionSignal(last.d,market);
+  const risk=action.crashRisk;
+
+  $("outlookCards").innerHTML=`
+    <div class="card">
+      <div class="card-title">現在基準価額</div>
+      <div class="card-value">${Math.round(outlook.latest).toLocaleString()}円</div>
+    </div>
+    <div class="card">
+      <div class="card-title">来週中心予測</div>
+      <div class="card-value">${Math.round(outlook.weekly.center).toLocaleString()}円</div>
+      <div class="card-sub">${pct(outlook.weekly.returnRate)}・上昇確率 ${outlook.weekly.up.toFixed(1)}%</div>
+    </div>
+    <div class="card">
+      <div class="card-title">来月中心予測</div>
+      <div class="card-value">${Math.round(outlook.monthly.center).toLocaleString()}円</div>
+      <div class="card-sub">${pct(outlook.monthly.returnRate)}・上昇確率 ${outlook.monthly.up.toFixed(1)}%</div>
+    </div>
+    <div class="card">
+      <div class="card-title">外部環境補正</div>
+      <div class="card-value">${pct(outlook.adjustment)}</div>
+      <div class="card-sub">入力値による参考補正</div>
+    </div>`;
+
+  $("outlookReason").className=`comment ${monthlyLabel.className}`;
+  $("outlookReason").textContent=`来週判定：${weeklyLabel.label}
+来月判定：${monthlyLabel.label}
+
+来週の中心予測は${Math.round(outlook.weekly.center).toLocaleString()}円、来月は${Math.round(outlook.monthly.center).toLocaleString()}円です。
+
+この予測は、CSVの過去リターンを基礎に、市場環境入力を${weight}%反映しています。相場ニュースや運用会社の判断を直接取得した予測ではありません。`;
+
+  $("actionSignal").innerHTML=`
+    <span class="signal-pill signal-${action.code}">${action.label}</span>
+
+${action.detail}
+
+総合行動スコア：${action.score.toFixed(0)}/100`;
+
+  $("actionScore").innerHTML=`
+    <div class="scorebar"><span style="width:${action.score}%"></span></div>
+    <div class="small" style="margin-top:7px">
+      WCM内部スコア ${action.wcm.score.toFixed(0)}点・外部環境 ${action.marketScore.toFixed(0)}点・暴落警戒度 ${action.crashRisk.toFixed(0)}点
+    </div>`;
+
+  const riskClass=risk>=65?"risk-high":risk>=40?"risk-mid":"risk-low";
+  const riskLabel=risk>=65?"高い":risk>=40?"中程度":"低い";
+
+  $("crashRiskCards").innerHTML=`
+    <div class="card">
+      <div class="card-title">暴落警戒度</div>
+      <div class="card-value">${risk.toFixed(0)}/100</div>
+      <div class="card-sub">${riskLabel}</div>
+    </div>
+    <div class="card">
+      <div class="card-title">1か月騰落率</div>
+      <div class="card-value">${pct(recentReturn(last.d,21))}</div>
+    </div>
+    <div class="card">
+      <div class="card-title">現在下落率</div>
+      <div class="card-value">${rollingDrawdowns(last.d).at(-1).toFixed(2)}%</div>
+    </div>
+    <div class="card">
+      <div class="card-title">年率変動率</div>
+      <div class="card-value">${vol(last.d).toFixed(2)}%</div>
+    </div>`;
+
+  $("crashRiskComment").className=`comment ${riskClass}`;
+  $("crashRiskComment").textContent=risk>=65
+    ?"過去データと入力した市場環境では、急落への警戒度が高めです。一括投資より分割投資を優先し、生活防衛資金を確保してください。"
+    :risk>=40
+      ?"警戒度は中程度です。通常積立を基本とし、追加投資は複数回に分ける方が安全です。"
+      :"急落警戒度は比較的低い状態です。ただし、突発的なニュースによる下落は予測できません。";
+
+  localStorage.setItem("wcm9-outlook",JSON.stringify({weight,caution}))
+}
+
+function restoreOutlookSettings(){
+  try{
+    const saved=JSON.parse(localStorage.getItem("wcm9-outlook")||"null");
+    if(!saved)return;
+    $("marketWeight").value=saved.weight??40;
+    $("forecastCaution").value=saved.caution??"normal"
+  }catch(_){}
+}
+
+function createSnapshot(){
+  if(!last.d||!last.rs)return null;
+  const market=getSavedMarketInputs();
+  const action=calculateActionSignal(last.d,market);
+  const outlook=calculateOutlook(
+    last.d,
+    market,
+    +$("marketWeight").value||40,
+    $("forecastCaution").value
+  );
+  const best=[...last.rs].sort((a,b)=>b.value-a.value)[0];
+
+  return {
+    id:Date.now(),
+    date:new Date().toLocaleString("ja-JP"),
+    latestNav:last.d.at(-1).nav,
+    bestMethod:best.name,
+    bestValue:best.value,
+    action:action.label,
+    actionScore:action.score,
+    crashRisk:action.crashRisk,
+    weeklyForecast:outlook.weekly.center,
+    monthlyForecast:outlook.monthly.center
+  }
+}
+
+function loadHistory(){
+  try{return JSON.parse(localStorage.getItem("wcm9-history")||"[]")}
+  catch(_){return []}
+}
+
+function saveSnapshot(){
+  const snapshot=createSnapshot();
+  if(!snapshot)return;
+  const history=loadHistory();
+  history.unshift(snapshot);
+  localStorage.setItem("wcm9-history",JSON.stringify(history.slice(0,20)));
+  renderHistory()
+}
+
+function renderHistory(){
+  const history=loadHistory();
+  $("historyList").innerHTML=history.length
+    ?history.map(item=>`
+      <div class="history-item">
+        <div class="history-head">
+          <span>${item.date}</span>
+          <span>${item.action}</span>
+        </div>
+        <div class="history-meta">
+          基準価額：${Math.round(item.latestNav).toLocaleString()}円<br>
+          最良方式：${item.bestMethod}（${yen(item.bestValue)}）<br>
+          行動スコア：${item.actionScore.toFixed(0)}点・暴落警戒度：${item.crashRisk.toFixed(0)}点<br>
+          来週予測：${Math.round(item.weeklyForecast).toLocaleString()}円・来月予測：${Math.round(item.monthlyForecast).toLocaleString()}円
+        </div>
+      </div>`).join("")
+    :'<div class="small">保存された履歴はありません。</div>'
+}
+
+function clearHistory(){
+  if(confirm("分析履歴をすべて削除しますか？")){
+    localStorage.removeItem("wcm9-history");
+    renderHistory()
+  }
+}
+
 document.querySelectorAll(".tab").forEach(b=>b.onclick=()=>{
 function getMarketInputs(){
   return {
@@ -582,9 +851,280 @@ function restoreMarketInputs(){
   }catch(_){}
 }
 
+
+function getSavedMarketInputs(){
+  try{
+    return JSON.parse(localStorage.getItem("wcm8-market")||"null")||{
+      nasdaq:0,sp:0,usdJpy:0,vix:0,growth:0,yieldBp:0
+    }
+  }catch(_){
+    return {nasdaq:0,sp:0,usdJpy:0,vix:0,growth:0,yieldBp:0}
+  }
+}
+
+function calculateExternalReturnAdjustment(market,weightPercent){
+  const raw=
+    market.nasdaq*.24+
+    market.sp*.10+
+    market.growth*.32+
+    market.usdJpy*.16-
+    market.vix*.035-
+    market.yieldBp*.012;
+
+  return raw*(clamp(weightPercent,0,100)/100)
+}
+
+function calculateCrashRisk(rows,market){
+  const oneMonth=recentReturn(rows,21);
+  const quarter=recentReturn(rows,63);
+  const currentDd=rollingDrawdowns(rows).at(-1);
+  const volatility=vol(rows);
+
+  let risk=25;
+  risk+=clamp(-oneMonth,0,20)*1.5;
+  risk+=clamp(-quarter,0,30)*.65;
+  risk+=clamp(-currentDd,0,40)*.8;
+  risk+=clamp(volatility-18,0,35)*.85;
+  risk+=clamp(market.vix,0,60)*.45;
+  risk+=clamp(-market.nasdaq,0,12)*1.2;
+  risk+=clamp(market.yieldBp,0,80)*.12;
+
+  return clamp(risk,0,100)
+}
+
+function calculateActionSignal(rows,market){
+  const wcm=calculateWcmScore(rows);
+  const marketScore=calculateMarketScore(market);
+  const crashRisk=calculateCrashRisk(rows,market);
+  const recent=recentReturn(rows,21);
+
+  let score=
+    wcm.score*.55+
+    marketScore*.25+
+    (100-crashRisk)*.20;
+
+  if(recent>12)score-=10;
+  if(recent<-12)score+=8;
+
+  score=clamp(score,0,100);
+
+  let label="様子見";
+  let code="hold";
+  let detail="通常積立を続け、追加投資は急がない判定です。";
+
+  if(score>=68){
+    label="積立・分割追加";
+    code="buy";
+    detail="過去データと外部環境の組み合わせでは、通常積立の継続と分割追加を検討できる判定です。";
+  }else if(score<38){
+    label="慎重・利益確定も検討";
+    code="take";
+    detail="短期的な下落または過熱のリスクが高く、新規の一括投資は慎重にする判定です。保有比率が大きすぎる場合は一部利益確定も選択肢です。";
+  }
+
+  return {score,label,code,detail,wcm,marketScore,crashRisk}
+}
+
+function calculateOutlook(rows,market,weight,caution){
+  const weekly=forecast(rows,5);
+  const monthly=forecast(rows,21);
+  const adjustment=calculateExternalReturnAdjustment(market,weight);
+
+  let cautionFactor=1;
+  if(caution==="cautious")cautionFactor=.65;
+  if(caution==="optimistic")cautionFactor=1.25;
+
+  const latest=rows.at(-1).nav;
+  const weeklyAdjusted=weekly.center*(1+adjustment/100*.25*cautionFactor);
+  const monthlyAdjusted=monthly.center*(1+adjustment/100*cautionFactor);
+
+  const weeklyReturn=(weeklyAdjusted/latest-1)*100;
+  const monthlyReturn=(monthlyAdjusted/latest-1)*100;
+
+  const weeklyUp=clamp(weekly.up+adjustment*2.2,5,95);
+  const monthlyUp=clamp(monthly.up+adjustment*1.6,5,95);
+
+  return {
+    latest,
+    weekly:{...weekly,center:weeklyAdjusted,returnRate:weeklyReturn,up:weeklyUp},
+    monthly:{...monthly,center:monthlyAdjusted,returnRate:monthlyReturn,up:monthlyUp},
+    adjustment
+  }
+}
+
+function outlookLabel(returnRate){
+  if(returnRate>=2)return {label:"上昇寄り",className:"outlook-up"};
+  if(returnRate<=-2)return {label:"下落寄り",className:"outlook-down"};
+  return {label:"横ばい",className:"outlook-flat"}
+}
+
+function renderOutlook(){
+  if(!last.d)return;
+
+  const market=getMarketInputs();
+  const weight=+$("marketWeight").value||40;
+  const caution=$("forecastCaution").value;
+  const outlook=calculateOutlook(last.d,market,weight,caution);
+  const weeklyLabel=outlookLabel(outlook.weekly.returnRate);
+  const monthlyLabel=outlookLabel(outlook.monthly.returnRate);
+  const action=calculateActionSignal(last.d,market);
+  const risk=action.crashRisk;
+
+  $("outlookCards").innerHTML=`
+    <div class="card">
+      <div class="card-title">現在基準価額</div>
+      <div class="card-value">${Math.round(outlook.latest).toLocaleString()}円</div>
+    </div>
+    <div class="card">
+      <div class="card-title">来週中心予測</div>
+      <div class="card-value">${Math.round(outlook.weekly.center).toLocaleString()}円</div>
+      <div class="card-sub">${pct(outlook.weekly.returnRate)}・上昇確率 ${outlook.weekly.up.toFixed(1)}%</div>
+    </div>
+    <div class="card">
+      <div class="card-title">来月中心予測</div>
+      <div class="card-value">${Math.round(outlook.monthly.center).toLocaleString()}円</div>
+      <div class="card-sub">${pct(outlook.monthly.returnRate)}・上昇確率 ${outlook.monthly.up.toFixed(1)}%</div>
+    </div>
+    <div class="card">
+      <div class="card-title">外部環境補正</div>
+      <div class="card-value">${pct(outlook.adjustment)}</div>
+      <div class="card-sub">入力値による参考補正</div>
+    </div>`;
+
+  $("outlookReason").className=`comment ${monthlyLabel.className}`;
+  $("outlookReason").textContent=`来週判定：${weeklyLabel.label}
+来月判定：${monthlyLabel.label}
+
+来週の中心予測は${Math.round(outlook.weekly.center).toLocaleString()}円、来月は${Math.round(outlook.monthly.center).toLocaleString()}円です。
+
+この予測は、CSVの過去リターンを基礎に、市場環境入力を${weight}%反映しています。相場ニュースや運用会社の判断を直接取得した予測ではありません。`;
+
+  $("actionSignal").innerHTML=`
+    <span class="signal-pill signal-${action.code}">${action.label}</span>
+
+${action.detail}
+
+総合行動スコア：${action.score.toFixed(0)}/100`;
+
+  $("actionScore").innerHTML=`
+    <div class="scorebar"><span style="width:${action.score}%"></span></div>
+    <div class="small" style="margin-top:7px">
+      WCM内部スコア ${action.wcm.score.toFixed(0)}点・外部環境 ${action.marketScore.toFixed(0)}点・暴落警戒度 ${action.crashRisk.toFixed(0)}点
+    </div>`;
+
+  const riskClass=risk>=65?"risk-high":risk>=40?"risk-mid":"risk-low";
+  const riskLabel=risk>=65?"高い":risk>=40?"中程度":"低い";
+
+  $("crashRiskCards").innerHTML=`
+    <div class="card">
+      <div class="card-title">暴落警戒度</div>
+      <div class="card-value">${risk.toFixed(0)}/100</div>
+      <div class="card-sub">${riskLabel}</div>
+    </div>
+    <div class="card">
+      <div class="card-title">1か月騰落率</div>
+      <div class="card-value">${pct(recentReturn(last.d,21))}</div>
+    </div>
+    <div class="card">
+      <div class="card-title">現在下落率</div>
+      <div class="card-value">${rollingDrawdowns(last.d).at(-1).toFixed(2)}%</div>
+    </div>
+    <div class="card">
+      <div class="card-title">年率変動率</div>
+      <div class="card-value">${vol(last.d).toFixed(2)}%</div>
+    </div>`;
+
+  $("crashRiskComment").className=`comment ${riskClass}`;
+  $("crashRiskComment").textContent=risk>=65
+    ?"過去データと入力した市場環境では、急落への警戒度が高めです。一括投資より分割投資を優先し、生活防衛資金を確保してください。"
+    :risk>=40
+      ?"警戒度は中程度です。通常積立を基本とし、追加投資は複数回に分ける方が安全です。"
+      :"急落警戒度は比較的低い状態です。ただし、突発的なニュースによる下落は予測できません。";
+
+  localStorage.setItem("wcm9-outlook",JSON.stringify({weight,caution}))
+}
+
+function restoreOutlookSettings(){
+  try{
+    const saved=JSON.parse(localStorage.getItem("wcm9-outlook")||"null");
+    if(!saved)return;
+    $("marketWeight").value=saved.weight??40;
+    $("forecastCaution").value=saved.caution??"normal"
+  }catch(_){}
+}
+
+function createSnapshot(){
+  if(!last.d||!last.rs)return null;
+  const market=getSavedMarketInputs();
+  const action=calculateActionSignal(last.d,market);
+  const outlook=calculateOutlook(
+    last.d,
+    market,
+    +$("marketWeight").value||40,
+    $("forecastCaution").value
+  );
+  const best=[...last.rs].sort((a,b)=>b.value-a.value)[0];
+
+  return {
+    id:Date.now(),
+    date:new Date().toLocaleString("ja-JP"),
+    latestNav:last.d.at(-1).nav,
+    bestMethod:best.name,
+    bestValue:best.value,
+    action:action.label,
+    actionScore:action.score,
+    crashRisk:action.crashRisk,
+    weeklyForecast:outlook.weekly.center,
+    monthlyForecast:outlook.monthly.center
+  }
+}
+
+function loadHistory(){
+  try{return JSON.parse(localStorage.getItem("wcm9-history")||"[]")}
+  catch(_){return []}
+}
+
+function saveSnapshot(){
+  const snapshot=createSnapshot();
+  if(!snapshot)return;
+  const history=loadHistory();
+  history.unshift(snapshot);
+  localStorage.setItem("wcm9-history",JSON.stringify(history.slice(0,20)));
+  renderHistory()
+}
+
+function renderHistory(){
+  const history=loadHistory();
+  $("historyList").innerHTML=history.length
+    ?history.map(item=>`
+      <div class="history-item">
+        <div class="history-head">
+          <span>${item.date}</span>
+          <span>${item.action}</span>
+        </div>
+        <div class="history-meta">
+          基準価額：${Math.round(item.latestNav).toLocaleString()}円<br>
+          最良方式：${item.bestMethod}（${yen(item.bestValue)}）<br>
+          行動スコア：${item.actionScore.toFixed(0)}点・暴落警戒度：${item.crashRisk.toFixed(0)}点<br>
+          来週予測：${Math.round(item.weeklyForecast).toLocaleString()}円・来月予測：${Math.round(item.monthlyForecast).toLocaleString()}円
+        </div>
+      </div>`).join("")
+    :'<div class="small">保存された履歴はありません。</div>'
+}
+
+function clearHistory(){
+  if(confirm("分析履歴をすべて削除しますか？")){
+    localStorage.removeItem("wcm9-history");
+    renderHistory()
+  }
+}
+
 document.querySelectorAll(".tab").forEach(x=>x.classList.remove("active"));document.querySelectorAll(".page").forEach(x=>x.hidden=true);b.classList.add("active");$(b.dataset.page).hidden=false});
-$("distFile").onchange=e=>load(e.target,"dist");$("growthFile").onchange=e=>load(e.target,"growth");$("analyze").onclick=analyze;$("runMonte").onclick=runMonte;$("calcFire").onclick=calcFire;$("calcStress").onclick=renderStress;$("analyzeMarket").onclick=analyzeMarketEnvironment;$("download").onclick=download;
+$("distFile").onchange=e=>load(e.target,"dist");$("growthFile").onchange=e=>load(e.target,"growth");$("analyze").onclick=analyze;$("runMonte").onclick=runMonte;$("calcFire").onclick=calcFire;$("calcStress").onclick=renderStress;$("analyzeMarket").onclick=()=>{analyzeMarketEnvironment();if(last.d)renderOutlook()};$("recalcOutlook").onclick=renderOutlook;$("saveSnapshot").onclick=saveSnapshot;$("clearHistory").onclick=clearHistory;$("download").onclick=download;
 $("taxMode").onchange=e=>$("taxRate").disabled=e.target.value==="before";
 try{const s=JSON.parse(localStorage.getItem("wcm5")||"{}");if(s.start)$("startDate").value=s.start;if(s.initial!=null)$("initial").value=s.initial;if(s.monthly!=null)$("monthly").value=s.monthly;if(s.day)$("day").value=s.day;if(s.taxMode)$("taxMode").value=s.taxMode;if(s.taxRate)$("taxRate").value=s.taxRate}catch(_){}
 if("serviceWorker"in navigator)navigator.serviceWorker.register("./sw.js").catch(()=>{});
 restoreMarketInputs();
+
+restoreOutlookSettings();
+renderHistory();
