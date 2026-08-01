@@ -1,4 +1,4 @@
-const CACHE="wcm-analyzer-v10";
+const CACHE="wcm-analyzer-v11";
 const ASSETS=[
   "./",
   "./index.html",
@@ -25,4 +25,18 @@ self.addEventListener("activate",event=>{
     )
   );
   self.clients.claim();
+});
+
+self.addEventListener("fetch",event=>{
+  if(event.request.method!=="GET")return;
+
+  event.respondWith(
+    fetch(event.request,{cache:"no-store"})
+      .then(response=>{
+        const copy=response.clone();
+        caches.open(CACHE).then(cache=>cache.put(event.request,copy));
+        return response;
+      })
+      .catch(()=>caches.match(event.request))
+  );
 });
