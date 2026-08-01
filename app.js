@@ -1,5 +1,5 @@
 "use strict";
-const APP_VERSION="10.0";
+const APP_VERSION="11.0";
 let distData=null,growthData=null,last={};
 const $=id=>document.getElementById(id);
 const yen=v=>new Intl.NumberFormat("ja-JP",{style:"currency",currency:"JPY",maximumFractionDigits:0}).format(Number(v||0));
@@ -64,6 +64,41 @@ function cagr(rows){const days=(rows.at(-1).date-rows[0].date)/86400000;return d
 function mdd(rows){let h=-Infinity,w=0;for(const r of rows){h=Math.max(h,r.nav);w=Math.min(w,r.nav/h-1)}return w*100}
 function vol(rows){return sd(returns(rows))*Math.sqrt(252)*100}
 function sharpe(rows){const r=returns(rows),s=sd(r);return s?mean(r)/s*Math.sqrt(252):0}
+
+function downsideDeviation(rows,minimumAcceptableReturn=0){
+  const r=returns(rows);
+  if(!r.length)return 0;
+  const downside=r.map(value=>Math.min(value-minimumAcceptableReturn,0));
+  const variance=downside.reduce((sum,value)=>sum+value*value,0)/downside.length;
+  return Math.sqrt(variance)
+}
+function sortino(rows,annualRiskFreeRate=0){
+  const r=returns(rows);
+  if(!r.length)return 0;
+  const dailyTarget=annualRiskFreeRate/252;
+  const downside=downsideDeviation(rows,dailyTarget);
+  if(!downside)return 0;
+  return (mean(r)-dailyTarget)/downside*Math.sqrt(252)
+}
+function historicalVar(rows,confidence=.95){
+  const r=returns(rows).filter(Number.isFinite).sort((a,b)=>a-b);
+  if(!r.length)return 0;
+  const tailProbability=1-confidence;
+  const cutoff=quantile(r,tailProbability);
+  return Math.max(-cutoff,0)*100
+}
+function historicalCvar(rows,confidence=.95){
+  const r=returns(rows).filter(Number.isFinite).sort((a,b)=>a-b);
+  if(!r.length)return 0;
+  const cutoff=quantile(r,1-confidence);
+  const tail=r.filter(value=>value<=cutoff);
+  if(!tail.length)return historicalVar(rows,confidence);
+  return Math.max(-mean(tail),0)*100
+}
+function calmar(rows){
+  const drawdown=Math.abs(mdd(rows));
+  return drawdown>0?cagr(rows)/drawdown:0
+}
 function monthlyWin(rows){const m=new Map();rows.forEach(r=>m.set(`${r.date.getFullYear()}-${r.date.getMonth()}`,r.nav));const v=[...m.values()];let w=0;for(let i=1;i<v.length;i++)if(v[i]>v[i-1])w++;return v.length>1?w/(v.length-1)*100:0}
 function plan(rows,initial,monthly,day){
   const map=new Map();if(initial>0)map.set(rows[0].dateText,initial);
@@ -327,7 +362,18 @@ function analyze(){
     const best=[...rs].sort((a,b)=>b.value-a.value)[0];
     $("cards").innerHTML=`<div class="card"><div class="card-title">投資元本</div><div class="card-value">${yen(ds.principal)}</div></div><div class="card"><div class="card-title">最も高い方式</div><div class="card-value">${best.name}</div><div class="card-sub">${yen(best.value)}</div></div><div class="card"><div class="card-title">受取分配金</div><div class="card-value">${yen(ds.cash)}</div></div><div class="card"><div class="card-title">推定税額</div><div class="card-value">${yen(ds.tax)}</div></div>`;
     $("compareBody").innerHTML=rs.map(x=>`<tr><td>${x.name}</td><td>${yen(x.principal)}</td><td>${yen(x.value)}</td><td class="${x.profit>=0?"positive":"negative"}">${yen(x.profit)}</td><td>${pct(x.rate)}</td></tr>`).join("");
-    $("riskBody").innerHTML=[["CAGR",cagr(d),cagr(g),"%"],["最大下落率",mdd(d),mdd(g),"%"],["年率ボラティリティ",vol(d),vol(g),"%"],["シャープレシオ",sharpe(d),sharpe(g),""],["月間勝率",monthlyWin(d),monthlyWin(g),"%"]].map(x=>`<tr><td>${x[0]}</td><td>${x[1].toFixed(2)}${x[3]}</td><td>${x[2].toFixed(2)}${x[3]}</td></tr>`).join("");
+    $("riskBody").innerHTML=[
+      ["CAGR",cagr(d),cagr(g),"%"],
+      ["最大下落率",mdd(d),mdd(g),"%"],
+      ["年率ボラティリティ",vol(d),vol(g),"%"],
+      ["シャープレシオ",sharpe(d),sharpe(g),""],
+      ["ソルティノレシオ",sortino(d),sortino(g),""],
+      ["カルマーレシオ",calmar(d),calmar(g),""],
+      ["日次VaR 95%",historicalVar(d,.95),historicalVar(g,.95),"%"],
+      ["日次VaR 99%",historicalVar(d,.99),historicalVar(g,.99),"%"],
+      ["日次CVaR 95%",historicalCvar(d,.95),historicalCvar(g,.95),"%"],
+      ["月間勝率",monthlyWin(d),monthlyWin(g),"%"]
+    ].map(x=>`<tr><td>${x[0]}</td><td>${x[1].toFixed(2)}${x[3]}</td><td>${x[2].toFixed(2)}${x[3]}</td></tr>`).join("");
     const fs=[["1か月",21],["3か月",63],["1年",252]];
     $("forecastCards").innerHTML=fs.map(([n,days])=>{const f=forecast(d,days);return`<div class="forecast"><span>${n}後</span><strong>${Math.round(f.center).toLocaleString()}円</strong><small>上昇確率 ${f.up.toFixed(1)}%<br>${Math.round(f.low).toLocaleString()}〜${Math.round(f.high).toLocaleString()}円</small></div>`}).join("");
     const paid=d.filter(r=>r.distribution>0).map(r=>r.distribution),freq={};paid.forEach(v=>freq[v]=(freq[v]||0)+1);const pred=Object.entries(freq).sort((a,b)=>b[1]-a[1]).slice(0,4);
@@ -342,47 +388,288 @@ function analyze(){
     $("resultArea").scrollIntoView({behavior:"smooth"})
   }catch(e){$("mainStatus").className="status bad";$("mainStatus").textContent=`分析エラー：${e.message}`}
 }
-function runMonte(){
-  if(!last.d)return;
-  const years=+$("mcYears").value,runs=+$("mcRuns").value,model=$("mcModel").value,lossBasis=$("lossBasis").value,seed=+$("mcSeed").value||1,blockSize=+$("blockDays").value||21;
+function simulateMonteModel({
+  model,
+  blockSize=20,
+  years,
+  runs,
+  seed,
+  lossBasis
+}){
   const series=returns(last.d).filter(Number.isFinite);
-  if(series.length<30){$("monteResult").innerHTML='<div class="status bad">日次データが不足しています。</div>';return}
-  const startValue=last.ds.reinvest,monthly=+$("monthly").value||0,daysPerMonth=21,totalMonths=years*12,totalDays=totalMonths*daysPerMonth,totalContrib=monthly*totalMonths;
-  const threshold=lossBasis==="total"?last.ds.principal+totalContrib:startValue;
-  const m=mean(series),s=sd(series),results=[],yearly=Array.from({length:years},()=>[]);
-  for(let k=0;k<runs;k++){
-    const rng=makeRng(seed+k*104729),blockSampler=model==="block"?createBlockSampler(series,blockSize,rng):null;
+  if(series.length<30)throw new Error("日次データが不足しています。");
+
+  const startValue=last.ds.reinvest;
+  const monthly=+$("monthly").value||0;
+  const daysPerMonth=21;
+  const totalMonths=years*12;
+  const totalDays=totalMonths*daysPerMonth;
+  const totalContrib=monthly*totalMonths;
+  const threshold=lossBasis==="total"
+    ?last.ds.principal+totalContrib
+    :startValue;
+
+  const averageReturn=mean(series);
+  const volatility=sd(series);
+  const results=[];
+  const yearly=Array.from({length:years},()=>[]);
+
+  for(let simulationIndex=0;simulationIndex<runs;simulationIndex++){
+    const rng=makeRng(seed+simulationIndex*104729);
+    const blockSampler=model==="block"
+      ?createBlockSampler(series,blockSize,rng)
+      :null;
+
     let value=startValue;
-    for(let d=1;d<=totalDays;d++){
-      let r=model==="bootstrap"?sampleBootstrap(series,rng):model==="block"?blockSampler():m+s*normalFromRng(rng);
-      value*=Math.max(1+r,.001);
-      if(d%daysPerMonth===0)value+=monthly;
-      if(d%252===0){const yi=Math.min(Math.floor(d/252)-1,years-1);yearly[yi].push(value)}
+
+    for(let dayIndex=1;dayIndex<=totalDays;dayIndex++){
+      let dailyReturn;
+
+      if(model==="bootstrap"){
+        dailyReturn=sampleBootstrap(series,rng)
+      }else if(model==="block"){
+        dailyReturn=blockSampler()
+      }else{
+        dailyReturn=averageReturn+volatility*normalFromRng(rng)
+      }
+
+      value*=Math.max(1+dailyReturn,.001);
+
+      if(dayIndex%daysPerMonth===0)value+=monthly;
+
+      if(dayIndex%252===0){
+        const yearIndex=Math.min(Math.floor(dayIndex/252)-1,years-1);
+        yearly[yearIndex].push(value)
+      }
     }
+
     results.push(value)
   }
+
   results.sort((a,b)=>a-b);
-  const p05=quantile(results,.05),p25=quantile(results,.25),median=quantile(results,.5),p75=quantile(results,.75),p95=quantile(results,.95),avg=mean(results);
-  const loss=results.filter(v=>v<threshold).length/runs*100,severe=results.filter(v=>v<threshold*.8).length/runs*100;
-  const label={bootstrap:"実データ・ブートストラップ",block:"実データ・ブロック法",normal:"比較用・正規分布"}[model];
-  $("monteResult").innerHTML=`<div class="cards">
-    <div class="card"><div class="card-title">下位5%</div><div class="card-value">${yen(p05)}</div></div>
-    <div class="card"><div class="card-title">中央値</div><div class="card-value">${yen(median)}</div></div>
-    <div class="card"><div class="card-title">平均値</div><div class="card-value">${yen(avg)}</div></div>
-    <div class="card"><div class="card-title">上位5%</div><div class="card-value">${yen(p95)}</div></div>
-    <div class="card"><div class="card-title">元本割れ確率</div><div class="card-value">${loss.toFixed(1)}%</div><div class="card-sub">判定額 ${yen(threshold)}</div></div>
-    <div class="card"><div class="card-title">20%以上の元本割れ</div><div class="card-value">${severe.toFixed(1)}%</div></div>
-  </div><div class="comment" style="margin-top:12px">モデル：${label}
-試行回数：${runs.toLocaleString()}回
-乱数シード：${seed}
-過去の日次リターン件数：${series.length.toLocaleString()}件
-25〜75%区間：${yen(p25)}〜${yen(p75)}</div>`;
-  const buckets=24,min=results[0],max=results.at(-1),counts=Array(buckets).fill(0);
-  results.forEach(v=>counts[Math.min(buckets-1,Math.floor((v-min)/(max-min||1)*buckets))]++);
-  lineChart($("monteChart"),[{name:"最終資産の分布",color:"#3b82f6",values:counts}]);
-  const rows=yearly.map((v,i)=>{v.sort((a,b)=>a-b);return v.length?`<tr><td>${i+1}年後</td><td>${yen(quantile(v,.05))}</td><td>${yen(quantile(v,.5))}</td><td>${yen(quantile(v,.95))}</td></tr>`:""}).join("");
-  $("yearlyMonte").innerHTML=`<div class="tablewrap"><table><thead><tr><th>時点</th><th>下位5%</th><th>中央値</th><th>上位5%</th></tr></thead><tbody>${rows}</tbody></table></div><p class="small">元本割れ確率は、選択した判定基準とCSVの過去データに依存する参考値です。</p>`
+
+  const p05=quantile(results,.05);
+  const p25=quantile(results,.25);
+  const median=quantile(results,.5);
+  const p75=quantile(results,.75);
+  const p95=quantile(results,.95);
+  const average=mean(results);
+  const lossProbability=results.filter(value=>value<threshold).length/runs*100;
+  const severeLossProbability=results.filter(value=>value<threshold*.8).length/runs*100;
+  const expectedReturn=startValue>0?(median/startValue-1)*100:0;
+
+  return {
+    model,
+    blockSize,
+    years,
+    runs,
+    seed,
+    threshold,
+    seriesCount:series.length,
+    results,
+    yearly,
+    p05,
+    p25,
+    median,
+    p75,
+    p95,
+    average,
+    lossProbability,
+    severeLossProbability,
+    expectedReturn
+  }
 }
+
+function monteModelLabel(model,blockSize){
+  if(model==="bootstrap")return "ブートストラップ";
+  if(model==="block")return `ブロック法 ${blockSize}日`;
+  return "正規分布"
+}
+
+function renderSingleMonte(result){
+  const label=monteModelLabel(result.model,result.blockSize);
+
+  $("monteResult").innerHTML=`<div class="cards">
+    <div class="card"><div class="card-title">下位5%</div><div class="card-value">${yen(result.p05)}</div></div>
+    <div class="card"><div class="card-title">中央値</div><div class="card-value">${yen(result.median)}</div></div>
+    <div class="card"><div class="card-title">平均値</div><div class="card-value">${yen(result.average)}</div></div>
+    <div class="card"><div class="card-title">上位5%</div><div class="card-value">${yen(result.p95)}</div></div>
+    <div class="card"><div class="card-title">元本割れ確率</div><div class="card-value">${result.lossProbability.toFixed(1)}%</div><div class="card-sub">判定額 ${yen(result.threshold)}</div></div>
+    <div class="card"><div class="card-title">20%以上の元本割れ</div><div class="card-value">${result.severeLossProbability.toFixed(1)}%</div></div>
+  </div>
+  <div class="comment" style="margin-top:12px">モデル：${label}
+試行回数：${result.runs.toLocaleString()}回
+乱数シード：${result.seed}
+過去の日次リターン件数：${result.seriesCount.toLocaleString()}件
+25〜75%区間：${yen(result.p25)}〜${yen(result.p75)}</div>`;
+
+  const buckets=24;
+  const minimum=result.results[0];
+  const maximum=result.results.at(-1);
+  const counts=Array(buckets).fill(0);
+
+  result.results.forEach(value=>{
+    const index=Math.min(
+      buckets-1,
+      Math.floor((value-minimum)/(maximum-minimum||1)*buckets)
+    );
+    counts[index]+=1
+  });
+
+  lineChart(
+    $("monteChart"),
+    [{name:"最終資産の分布",color:"#3b82f6",values:counts}]
+  );
+
+  const yearlyRows=result.yearly.map((values,index)=>{
+    values.sort((a,b)=>a-b);
+    return values.length
+      ?`<tr><td>${index+1}年後</td><td>${yen(quantile(values,.05))}</td><td>${yen(quantile(values,.5))}</td><td>${yen(quantile(values,.95))}</td></tr>`
+      :""
+  }).join("");
+
+  $("yearlyMonte").innerHTML=`
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>時点</th><th>下位5%</th><th>中央値</th><th>上位5%</th></tr></thead>
+        <tbody>${yearlyRows}</tbody>
+      </table>
+    </div>
+    <p class="small">元本割れ確率は、選択した判定基準とCSVの過去データに依存する参考値です。</p>`
+}
+
+function runMonte(){
+  if(!last.d)return;
+
+  try{
+    const result=simulateMonteModel({
+      years:+$("mcYears").value,
+      runs:+$("mcRuns").value,
+      model:$("mcModel").value,
+      lossBasis:$("lossBasis").value,
+      seed:+$("mcSeed").value||1,
+      blockSize:+$("blockDays").value||20
+    });
+
+    renderSingleMonte(result)
+  }catch(error){
+    $("monteResult").innerHTML=`<div class="status bad">${error.message}</div>`
+  }
+}
+
+function compareMonteMethods(){
+  if(!last.d)return;
+
+  const status=$("monteCompareStatus");
+  status.className="status";
+  status.textContent="4手法を計算しています…";
+
+  setTimeout(()=>{
+    try{
+      const common={
+        years:+$("mcYears").value,
+        runs:+$("mcRuns").value,
+        lossBasis:$("lossBasis").value,
+        seed:+$("mcSeed").value||1
+      };
+
+      const methods=[
+        {model:"bootstrap",blockSize:1},
+        {model:"block",blockSize:5},
+        {model:"block",blockSize:10},
+        {model:"block",blockSize:20}
+      ];
+
+      const results=methods.map(method=>
+        simulateMonteModel({...common,...method})
+      );
+
+      const safest=[...results].sort(
+        (left,right)=>left.lossProbability-right.lossProbability
+      )[0];
+
+      const mostCautious=[...results].sort(
+        (left,right)=>left.median-right.median
+      )[0];
+
+      $("monteCompareTable").innerHTML=`
+        <div class="tablewrap">
+          <table>
+            <thead>
+              <tr>
+                <th>手法</th>
+                <th>下位5%</th>
+                <th>中央値</th>
+                <th>上位5%</th>
+                <th>元本割れ</th>
+                <th>中央値リターン</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${results.map(result=>{
+                const isSafest=result===safest;
+                const isCautious=result===mostCautious;
+                const className=isSafest
+                  ?"method-best"
+                  :isCautious
+                    ?"method-cautious"
+                    :"";
+
+                return `<tr>
+                  <td class="${className}">${monteModelLabel(result.model,result.blockSize)}</td>
+                  <td>${yen(result.p05)}</td>
+                  <td>${yen(result.median)}</td>
+                  <td>${yen(result.p95)}</td>
+                  <td>${result.lossProbability.toFixed(1)}%</td>
+                  <td>${pct(result.expectedReturn)}</td>
+                </tr>`
+              }).join("")}
+            </tbody>
+          </table>
+        </div>`;
+
+      const bootstrap=results[0];
+      const block20=results[3];
+      const probabilityDifference=
+        block20.lossProbability-bootstrap.lossProbability;
+      const medianDifference=
+        block20.median-bootstrap.median;
+
+      let interpretation;
+
+      if(Math.abs(probabilityDifference)<2){
+        interpretation="両手法の元本割れ確率は近く、結果は比較的安定しています。"
+      }else if(probabilityDifference>0){
+        interpretation="20日ブロック法の方が元本割れ確率を高く見積もっています。連続下落を残すことで、より慎重な結果になっています。"
+      }else{
+        interpretation="今回のデータでは20日ブロック法の元本割れ確率が低くなりました。過去に連続した回復局面が多く含まれる可能性があります。"
+      }
+
+      $("monteCompareComment").textContent=`比較結果
+
+最も元本割れ確率が低い手法：
+${monteModelLabel(safest.model,safest.blockSize)}（${safest.lossProbability.toFixed(1)}%）
+
+中央値が最も保守的な手法：
+${monteModelLabel(mostCautious.model,mostCautious.blockSize)}（${yen(mostCautious.median)}）
+
+ブートストラップと20日ブロック法の差：
+元本割れ確率 ${probabilityDifference>=0?"+":""}${probabilityDifference.toFixed(1)}ポイント
+中央値 ${medianDifference>=0?"+":""}${yen(medianDifference)}
+
+${interpretation}
+
+WCMでは相場の上昇・下落が数日から数週間続くことがあるため、通常は10日または20日ブロック法も併せて確認するのがおすすめです。`;
+
+      status.className="status ok";
+      status.textContent="比較が完了しました。"
+    }catch(error){
+      status.className="status bad";
+      status.textContent=`比較エラー：${error.message}`
+    }
+  },50)
+}
+
 function calcFire(){
   const need=+$("monthlyNeed").value||0;
   const wr=(+$("withdrawRate").value||4)/100;
@@ -1509,7 +1796,7 @@ function restoreDailyMemo(){
 }
 
 document.querySelectorAll(".tab").forEach(x=>x.classList.remove("active"));document.querySelectorAll(".page").forEach(x=>x.hidden=true);b.classList.add("active");$(b.dataset.page).hidden=false});
-$("distFile").onchange=e=>load(e.target,"dist");$("growthFile").onchange=e=>load(e.target,"growth");$("analyze").onclick=analyze;$("runMonte").onclick=runMonte;$("calcFire").onclick=calcFire;$("calcStress").onclick=renderStress;$("analyzeMarket").onclick=()=>{analyzeMarketEnvironment();if(last.d){renderOutlook();buildMorningBrief()}};$("recalcOutlook").onclick=renderOutlook;$("saveSnapshot").onclick=saveSnapshot;$("clearHistory").onclick=clearHistory;$("whatWouldIDo").onclick=buildWhatWouldIDo;$("saveMemo").onclick=saveDailyMemo;$("clearMemo").onclick=clearDailyMemo;$("download").onclick=download;
+$("distFile").onchange=e=>load(e.target,"dist");$("growthFile").onchange=e=>load(e.target,"growth");$("analyze").onclick=analyze;$("runMonte").onclick=runMonte;$("compareMonte").onclick=compareMonteMethods;$("calcFire").onclick=calcFire;$("calcStress").onclick=renderStress;$("analyzeMarket").onclick=()=>{analyzeMarketEnvironment();if(last.d){renderOutlook();buildMorningBrief()}};$("recalcOutlook").onclick=renderOutlook;$("saveSnapshot").onclick=saveSnapshot;$("clearHistory").onclick=clearHistory;$("whatWouldIDo").onclick=buildWhatWouldIDo;$("saveMemo").onclick=saveDailyMemo;$("clearMemo").onclick=clearDailyMemo;$("download").onclick=download;
 $("taxMode").onchange=e=>$("taxRate").disabled=e.target.value==="before";
 try{const s=JSON.parse(localStorage.getItem("wcm5")||"{}");if(s.start)$("startDate").value=s.start;if(s.initial!=null)$("initial").value=s.initial;if(s.monthly!=null)$("monthly").value=s.monthly;if(s.day)$("day").value=s.day;if(s.taxMode)$("taxMode").value=s.taxMode;if(s.taxRate)$("taxRate").value=s.taxRate}catch(_){}
 if("serviceWorker"in navigator)navigator.serviceWorker.register("./sw.js").catch(()=>{});
