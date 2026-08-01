@@ -1,5 +1,5 @@
 "use strict";
-const APP_VERSION="11.0";
+const APP_VERSION="11.1";
 let distData=null,growthData=null,last={};
 const $=id=>document.getElementById(id);
 const yen=v=>new Intl.NumberFormat("ja-JP",{style:"currency",currency:"JPY",maximumFractionDigits:0}).format(Number(v||0));
@@ -558,9 +558,13 @@ function runMonte(){
 }
 
 function compareMonteMethods(){
-  if(!last.d)return;
-
   const status=$("monteCompareStatus");
+
+  if(!last.d){
+    status.className="status bad";
+    status.textContent="先に2つのCSVを読み込み、「分析を開始」を押してください。";
+    return
+  }
   status.className="status";
   status.textContent="4手法を計算しています…";
 
@@ -1247,7 +1251,6 @@ function restoreDailyMemo(){
   $("dailyMemo").value=localStorage.getItem(memoKey())||""
 }
 
-document.querySelectorAll(".tab").forEach(b=>b.onclick=()=>{
 function getMarketInputs(){
   return {
     nasdaq:+$("nasdaqChange").value||0,
@@ -1795,7 +1798,14 @@ function restoreDailyMemo(){
   $("dailyMemo").value=localStorage.getItem(memoKey())||""
 }
 
-document.querySelectorAll(".tab").forEach(x=>x.classList.remove("active"));document.querySelectorAll(".page").forEach(x=>x.hidden=true);b.classList.add("active");$(b.dataset.page).hidden=false});
+document.querySelectorAll(".tab").forEach(button=>{
+  button.onclick=()=>{
+    document.querySelectorAll(".tab").forEach(item=>item.classList.remove("active"));
+    document.querySelectorAll(".page").forEach(page=>page.hidden=true);
+    button.classList.add("active");
+    $(button.dataset.page).hidden=false;
+  };
+});
 $("distFile").onchange=e=>load(e.target,"dist");$("growthFile").onchange=e=>load(e.target,"growth");$("analyze").onclick=analyze;$("runMonte").onclick=runMonte;$("compareMonte").onclick=compareMonteMethods;$("calcFire").onclick=calcFire;$("calcStress").onclick=renderStress;$("analyzeMarket").onclick=()=>{analyzeMarketEnvironment();if(last.d){renderOutlook();buildMorningBrief()}};$("recalcOutlook").onclick=renderOutlook;$("saveSnapshot").onclick=saveSnapshot;$("clearHistory").onclick=clearHistory;$("whatWouldIDo").onclick=buildWhatWouldIDo;$("saveMemo").onclick=saveDailyMemo;$("clearMemo").onclick=clearDailyMemo;$("download").onclick=download;
 $("taxMode").onchange=e=>$("taxRate").disabled=e.target.value==="before";
 try{const s=JSON.parse(localStorage.getItem("wcm5")||"{}");if(s.start)$("startDate").value=s.start;if(s.initial!=null)$("initial").value=s.initial;if(s.monthly!=null)$("monthly").value=s.monthly;if(s.day)$("day").value=s.day;if(s.taxMode)$("taxMode").value=s.taxMode;if(s.taxRate)$("taxRate").value=s.taxRate}catch(_){}
