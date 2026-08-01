@@ -1,5 +1,493 @@
 "use strict";
 const APP_VERSION="12.0";
+
+/* =========================================================
+   Ver.12 Integrated Professional Monte Carlo Engine
+   montecarlo-engine.js を app.js に統合
+   ========================================================= */
+
+/**
+ * WCM Analyzer Pro - Monte Carlo Engine
+ * Ver.12
+ *
+ * UIやDOMに依存しない独立シミュレーションエンジン。
+ * 入力は日次単純リターン、内部計算は対数リターンで行う。
+ */
+(function(global){
+  const VERSION = "12.0.0";
+
+  function assert(condition, message){
+    if(!condition) throw new Error(message);
+  }
+
+  function clamp(value,min,max){
+    return Math.min(Math.max(value,min),max);
+  }
+
+  function mean(values){
+    return values.length
+      ? values.reduce((sum,value)=>sum+value,0)/values.length
+      : 0;
+  }
+
+  function variance(values,sample=true){
+    if(values.length < (sample ? 2 : 1)) return 0;
+    const average=mean(values);
+    const divisor=sample ? values.length-1 : values.length;
+    return values.reduce((sum,value)=>sum+(value-average)**2,0)/divisor;
+  }
+
+  function standardDeviation(values,sample=true){
+    return Math.sqrt(Math.max(variance(values,sample),0));
+  }
+
+  function quantile(sortedValues,p){
+    if(!sortedValues.length) return 0;
+    const index=(sortedValues.length-1)*clamp(p,0,1);
+    const lower=Math.floor(index);
+    const upper=Math.ceil(index);
+    if(lower===upper) return sortedValues[lower];
+    return sortedValues[lower]+
+      (sortedValues[upper]-sortedValues[lower])*(index-lower);
+  }
+
+  function skewness(values){
+    if(values.length<3) return 0;
+    const average=mean(values);
+    const sd=standardDeviation(values,false);
+    if(!sd) return 0;
+    const m3=mean(values.map(v=>(v-average)**3));
+    return m3/(sd**3);
+  }
+
+  function excessKurtosis(values){
+    if(values.length<4) return 0;
+    const average=mean(values);
+    const sd=standardDeviation(values,false);
+    if(!sd) return 0;
+    const m4=mean(values.map(v=>(v-average)**4));
+    return m4/(sd**4)-3;
+  }
+
+  function autocorrelation(values,lag=1){
+    if(values.length<=lag) return 0;
+    const average=mean(values);
+    let numerator=0;
+    let denominator=0;
+    for(let i=0;i<values.length;i++){
+      const centered=values[i]-average;
+      denominator+=centered*centered;
+      if(i>=lag){
+        numerator+=centered*(values[i-lag]-average);
+      }
+    }
+    return denominator ? numerator/denominator : 0;
+  }
+
+  function recommendedBlockLength(values){
+    if(values.length<60) return 5;
+    const rho1=Math.abs(autocorrelation(values,1));
+    const rho5=Math.abs(autocorrelation(values,5));
+    const persistence=clamp(rho1*.75+rho5*.25,0,0.95);
+    const base=Math.cbrt(values.length);
+    return Math.round(clamp(base*(1+6*persistence),5,63));
+  }
+
+  function makeRng(seed){
+    let state=(Number(seed)||1)>>>0;
+    return function(){
+      state=(1664525*state+1013904223)>>>0;
+      return state/4294967296;
+    };
+  }
+
+  function normal(rng){
+    let u=0;
+    let v=0;
+    while(!u) u=rng();
+    while(!v) v=rng();
+    return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);
+  }
+
+  function gamma(shape,rng){
+    assert(shape>0,"Gamma分布のshapeは0より大きくしてください。");
+    if(shape<1){
+      return gamma(shape+1,rng)*Math.pow(rng(),1/shape);
+    }
+    const d=shape-1/3;
+    const c=1/Math.sqrt(9*d);
+    while(true){
+      const x=normal(rng);
+      let v=1+c*x;
+      if(v<=0) continue;
+      v=v*v*v;
+      const u=rng();
+      if(u<1-.0331*x*x*x*x) return d*v;
+      if(Math.log(u)<.5*x*x+d*(1-v+Math.log(v))) return d*v;
+    }
+  }
+
+  function studentT(df,rng){
+    const z=normal(rng);
+    const chiSquare=2*gamma(df/2,rng);
+    return z/Math.sqrt(chiSquare/df);
+  }
+
+  function winsorize(values,tailFraction){
+    if(!tailFraction) return [...values];
+    const sorted=[...values].sort((a,b)=>a-b);
+    const low=quantile(sorted,tailFraction);
+    const high=quantile(sorted,1-tailFraction);
+    return values.map(v=>clamp(v,low,high));
+  }
+
+  function simpleToLogReturns(simpleReturns){
+    return simpleReturns
+      .filter(Number.isFinite)
+      .filter(value=>value>-1)
+      .map(value=>Math.log1p(value));
+  }
+
+  function applyDriftPolicy(logReturns,policy,shrinkage=.5){
+    const historicalMean=mean(logReturns);
+    let targetMean=historicalMean;
+
+    if(policy==="shrink"){
+      targetMean=historicalMean*clamp(shrinkage,0,1);
+    }else if(policy==="zero"){
+      targetMean=0;
+    }else if(policy==="conservative"){
+      targetMean=Math.min(historicalMean*.35,0);
+    }
+
+    const adjustment=targetMean-historicalMean;
+    return {
+      values:logReturns.map(value=>value+adjustment),
+      historicalMean,
+      targetMean
+    };
+  }
+
+  function createIidSampler(series,rng){
+    return ()=>series[Math.floor(rng()*series.length)];
+  }
+
+  function createMovingBlockSampler(series,blockSize,rng){
+    let position=0;
+    let block=[];
+
+    return function(){
+      if(position>=block.length){
+        const size=Math.min(Math.max(1,blockSize),series.length);
+        const maxStart=Math.max(series.length-size,0);
+        const start=Math.floor(rng()*(maxStart+1));
+        block=series.slice(start,start+size);
+        position=0;
+      }
+      return block[position++];
+    };
+  }
+
+  function createCircularBlockSampler(series,blockSize,rng){
+    let index=0;
+    let remaining=0;
+
+    return function(){
+      if(remaining<=0){
+        index=Math.floor(rng()*series.length);
+        remaining=Math.max(1,blockSize);
+      }
+      const value=series[index];
+      index=(index+1)%series.length;
+      remaining-=1;
+      return value;
+    };
+  }
+
+  function createRandomBlockSampler(series,minSize,maxSize,rng){
+    let index=0;
+    let remaining=0;
+    const minimum=Math.max(1,minSize);
+    const maximum=Math.max(minimum,maxSize);
+
+    return function(){
+      if(remaining<=0){
+        index=Math.floor(rng()*series.length);
+        remaining=minimum+
+          Math.floor(rng()*(maximum-minimum+1));
+      }
+      const value=series[index];
+      index=(index+1)%series.length;
+      remaining-=1;
+      return value;
+    };
+  }
+
+  function createStationarySampler(series,averageBlockSize,rng){
+    let index=Math.floor(rng()*series.length);
+    const restartProbability=1/Math.max(1,averageBlockSize);
+
+    return function(){
+      if(rng()<restartProbability){
+        index=Math.floor(rng()*series.length);
+      }
+      const value=series[index];
+      index=(index+1)%series.length;
+      return value;
+    };
+  }
+
+  function createHybridSampler(series,blockSize,blockWeight,rng){
+    const blockSampler=createStationarySampler(series,blockSize,rng);
+    const iidSampler=createIidSampler(series,rng);
+    const weight=clamp(blockWeight,0,1);
+    return ()=>rng()<weight ? blockSampler() : iidSampler();
+  }
+
+  function createParametricSampler(series,distribution,df,rng){
+    const average=mean(series);
+    const sd=standardDeviation(series);
+    if(distribution==="student-t"){
+      const degrees=Math.max(3,df);
+      const scale=sd*Math.sqrt((degrees-2)/degrees);
+      return ()=>average+scale*studentT(degrees,rng);
+    }
+    return ()=>average+sd*normal(rng);
+  }
+
+  function createSampler(series,config,rng){
+    switch(config.method){
+      case "iid":
+        return createIidSampler(series,rng);
+      case "moving-block":
+        return createMovingBlockSampler(series,config.blockSize,rng);
+      case "circular-block":
+        return createCircularBlockSampler(series,config.blockSize,rng);
+      case "random-block":
+        return createRandomBlockSampler(
+          series,
+          config.minBlockSize,
+          config.maxBlockSize,
+          rng
+        );
+      case "stationary":
+        return createStationarySampler(
+          series,
+          config.averageBlockSize,
+          rng
+        );
+      case "hybrid":
+        return createHybridSampler(
+          series,
+          config.averageBlockSize,
+          config.blockWeight,
+          rng
+        );
+      case "normal":
+        return createParametricSampler(series,"normal",null,rng);
+      case "student-t":
+        return createParametricSampler(
+          series,
+          "student-t",
+          config.degreesOfFreedom,
+          rng
+        );
+      default:
+        throw new Error(`未対応のモンテカルロ手法です: ${config.method}`);
+    }
+  }
+
+  function diagnose(simpleReturns,settings={}){
+    const rawLogReturns=simpleToLogReturns(simpleReturns);
+    assert(rawLogReturns.length>=30,"モンテカルロには30件以上の日次データが必要です。");
+
+    const tailFraction=clamp(settings.winsorizeTail||0,0,.05);
+    const cleaned=winsorize(rawLogReturns,tailFraction);
+    const drift=applyDriftPolicy(
+      cleaned,
+      settings.driftPolicy||"shrink",
+      settings.driftShrinkage??.5
+    );
+
+    const dailyMean=mean(drift.values);
+    const dailyVol=standardDeviation(drift.values);
+    const annualizedReturn=Math.expm1(dailyMean*252)*100;
+    const annualizedVol=dailyVol*Math.sqrt(252)*100;
+    const lag1=autocorrelation(drift.values,1);
+    const lag5=autocorrelation(drift.values,5);
+    const suggestedBlock=recommendedBlockLength(drift.values);
+
+    const warnings=[];
+    if(rawLogReturns.length<252) warnings.push("データ期間が1年未満です。");
+    if(Math.abs(lag1)>.15) warnings.push("短期自己相関が比較的強く、単日抽出は流れを壊しやすいです。");
+    if(excessKurtosis(drift.values)>3) warnings.push("裾が厚く、正規分布モデルは急落を過小評価しやすいです。");
+    if(annualizedReturn>20) warnings.push("過去収益率が高いため、ドリフト縮小を推奨します。");
+    if(settings.driftPolicy==="historical") warnings.push("過去平均をそのまま使うため、長期結果が楽観的になりやすいです。");
+
+    return {
+      count:drift.values.length,
+      logReturns:drift.values,
+      rawHistoricalDailyMean:drift.historicalMean,
+      targetDailyMean:drift.targetMean,
+      annualizedReturn,
+      annualizedVol,
+      skewness:skewness(drift.values),
+      excessKurtosis:excessKurtosis(drift.values),
+      lag1Autocorrelation:lag1,
+      lag5Autocorrelation:lag5,
+      suggestedBlockLength:suggestedBlock,
+      warnings
+    };
+  }
+
+  function normalizeConfig(config,diagnostics){
+    const method=config.method||"stationary";
+    const recommended=diagnostics.suggestedBlockLength;
+
+    return {
+      method,
+      years:Math.max(1,Math.floor(config.years||5)),
+      runs:Math.max(100,Math.floor(config.runs||1000)),
+      seed:Number(config.seed)||1,
+      startValue:Math.max(0,Number(config.startValue)||0),
+      currentPrincipal:Math.max(0,Number(config.currentPrincipal)||0),
+      monthlyContribution:Math.max(0,Number(config.monthlyContribution)||0),
+      tradingDaysPerMonth:Math.max(1,Math.floor(config.tradingDaysPerMonth||21)),
+      lossBasis:config.lossBasis||"total",
+      blockSize:Math.max(1,Math.floor(config.blockSize||recommended)),
+      minBlockSize:Math.max(1,Math.floor(config.minBlockSize||3)),
+      maxBlockSize:Math.max(2,Math.floor(config.maxBlockSize||recommended*2)),
+      averageBlockSize:Math.max(1,Math.floor(config.averageBlockSize||recommended)),
+      blockWeight:clamp(config.blockWeight??.8,0,1),
+      degreesOfFreedom:Math.max(3,Number(config.degreesOfFreedom)||5),
+      captureYearly:config.captureYearly!==false
+    };
+  }
+
+  function simulate(simpleReturns,config={},settings={}){
+    const diagnostics=diagnose(simpleReturns,settings);
+    const preparedSeries=diagnostics.logReturns;
+    const normalized=normalizeConfig(config,diagnostics);
+
+    assert(normalized.startValue>0,"開始時評価額が0以下です。");
+
+    const totalMonths=normalized.years*12;
+    const totalDays=totalMonths*normalized.tradingDaysPerMonth;
+    const futureContributions=normalized.monthlyContribution*totalMonths;
+    const threshold=normalized.lossBasis==="total"
+      ?normalized.currentPrincipal+futureContributions
+      :normalized.startValue;
+
+    const outcomes=[];
+    const maxDrawdowns=[];
+    const yearly=Array.from({length:normalized.years},()=>[]);
+
+    for(let runIndex=0;runIndex<normalized.runs;runIndex++){
+      const rng=makeRng(normalized.seed+runIndex*104729);
+      const sampler=createSampler(preparedSeries,normalized,rng);
+
+      let value=normalized.startValue;
+      let peak=value;
+      let worstDrawdown=0;
+
+      for(let dayIndex=1;dayIndex<=totalDays;dayIndex++){
+        const logReturn=sampler();
+        value*=Math.exp(logReturn);
+
+        if(dayIndex%normalized.tradingDaysPerMonth===0){
+          value+=normalized.monthlyContribution;
+        }
+
+        peak=Math.max(peak,value);
+        if(peak>0){
+          worstDrawdown=Math.min(worstDrawdown,value/peak-1);
+        }
+
+        if(
+          normalized.captureYearly &&
+          dayIndex%252===0
+        ){
+          const yearIndex=Math.min(
+            Math.floor(dayIndex/252)-1,
+            normalized.years-1
+          );
+          yearly[yearIndex].push(value);
+        }
+      }
+
+      outcomes.push(value);
+      maxDrawdowns.push(worstDrawdown);
+    }
+
+    outcomes.sort((a,b)=>a-b);
+    maxDrawdowns.sort((a,b)=>a-b);
+
+    const p01=quantile(outcomes,.01);
+    const p05=quantile(outcomes,.05);
+    const p25=quantile(outcomes,.25);
+    const median=quantile(outcomes,.5);
+    const p75=quantile(outcomes,.75);
+    const p95=quantile(outcomes,.95);
+    const p99=quantile(outcomes,.99);
+    const average=mean(outcomes);
+    const lossProbability=outcomes.filter(v=>v<threshold).length/
+      normalized.runs*100;
+    const severeLossProbability=outcomes.filter(v=>v<threshold*.8).length/
+      normalized.runs*100;
+    const expectedMedianReturn=(median/normalized.startValue-1)*100;
+
+    return {
+      engineVersion:VERSION,
+      config:normalized,
+      diagnostics,
+      threshold,
+      outcomes,
+      yearly,
+      maxDrawdowns,
+      summary:{
+        minimum:outcomes[0],
+        p01,
+        p05,
+        p25,
+        median,
+        p75,
+        p95,
+        p99,
+        maximum:outcomes.at(-1),
+        average,
+        lossProbability,
+        severeLossProbability,
+        expectedMedianReturn,
+        medianMaxDrawdown:quantile(maxDrawdowns,.5)*100,
+        severeMaxDrawdown:quantile(maxDrawdowns,.05)*100
+      }
+    };
+  }
+
+  function methodLabel(config){
+    switch(config.method){
+      case "iid": return "単日ブートストラップ";
+      case "moving-block": return `移動ブロック法 ${config.blockSize}日`;
+      case "circular-block": return `循環ブロック法 ${config.blockSize}日`;
+      case "random-block": return `ランダム長 ${config.minBlockSize}〜${config.maxBlockSize}日`;
+      case "stationary": return `定常ブートストラップ 平均${config.averageBlockSize}日`;
+      case "hybrid": return `混合モデル ブロック${Math.round(config.blockWeight*100)}%`;
+      case "normal": return "正規分布";
+      case "student-t": return `t分布 自由度${config.degreesOfFreedom}`;
+      default: return config.method;
+    }
+  }
+
+  global.MonteCarloEngine=Object.freeze({
+    version:()=>VERSION,
+    diagnose,
+    simulate,
+    methodLabel,
+    recommendedBlockLength,
+    autocorrelation
+  });
+})(typeof window!=="undefined" ? window : globalThis);
+
 let distData=null,growthData=null,last={};
 const $=id=>document.getElementById(id);
 const yen=v=>new Intl.NumberFormat("ja-JP",{style:"currency",currency:"JPY",maximumFractionDigits:0}).format(Number(v||0));
