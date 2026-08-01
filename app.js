@@ -1,5 +1,5 @@
 "use strict";
-const APP_VERSION="12.0-final";
+const APP_VERSION="13.0";
 
 /* =========================================================
    Ver.12 Integrated Professional Monte Carlo Engine
@@ -841,6 +841,8 @@ function analyze(){
     const ds=simDist(d,initial,monthly,day,tax),gs=simGrowth(g,initial,monthly,day);
     const rs=[result("分配金受取",ds.principal,ds.total),result("分配金再投資",ds.principal,ds.reinvest),result("資産成長型",gs.principal,gs.value)];
     last={d,g,ds,gs,rs};
+    $("backtestStatus").className="status";
+    $("backtestStatus").textContent="分析データを更新しました。「精度検証を実行」を押してください。";
     renderWcmDiagnosis(d,rs);
     renderMonteDiagnostics();
     renderOutlook();
@@ -2265,6 +2267,495 @@ function restoreDailyMemo(){
   $("dailyMemo").value=localStorage.getItem(memoKey())||""
 }
 
+
+/* =========================================================
+   Ver.13 Walk-forward Forecast Validation
+   ========================================================= */
+
+const ForecastValidationEngine=(()=>{
+  const MODEL_DEFINITIONS=[
+    {id:"historical",label:"過去平均"},
+    {id:"ewma",label:"EWMA"},
+    {id:"momentum",label:"モメンタム"},
+    {id:"mean-reversion",label:"平均回帰"},
+    {id:"equal-ensemble",label:"均等アンサンブル"}
+  ];
+
+  function cleanLogReturns(rows){
+    const values=[];
+    for(let index=1;index<rows.length;index++){
+      const previous=rows[index-1].nav;
+      const current=rows[index].nav;
+      if(previous>0&&current>0){
+        values.push(Math.log(current/previous));
+      }
+    }
+    return values;
+  }
+
+  function weightedMean(values,decay=.97){
+    if(!values.length)return 0;
+    let numerator=0;
+    let denominator=0;
+    let weight=1;
+    for(let index=values.length-1;index>=0;index--){
+      numerator+=values[index]*weight;
+      denominator+=weight;
+      weight*=decay;
+    }
+    return denominator?numerator/denominator:0;
+  }
+
+  function zForCoverage(coverage){
+    if(coverage>=.949)return 1.96;
+    if(coverage>=.899)return 1.645;
+    return 1.282;
+  }
+
+  function modelDailyDrift(modelId,logReturns){
+    const longMean=mean(logReturns);
+    const recent21=logReturns.slice(-Math.min(21,logReturns.length));
+    const recentMean=mean(recent21);
+
+    if(modelId==="historical")return longMean;
+    if(modelId==="ewma")return weightedMean(logReturns,.97);
+    if(modelId==="momentum"){
+      return longMean*.35+recentMean*.65;
+    }
+    if(modelId==="mean-reversion"){
+      return longMean-(recentMean-longMean)*.45;
+    }
+    throw new Error(`未対応の予測モデルです: ${modelId}`);
+  }
+
+  function predictBase(modelId,trainingRows,horizon,coverage){
+    const logs=cleanLogReturns(trainingRows);
+    if(logs.length<20)throw new Error("予測に必要な履歴が不足しています。");
+
+    const latest=trainingRows.at(-1).nav;
+    const drift=modelDailyDrift(modelId,logs);
+    const volatility=sd(logs);
+    const center=latest*Math.exp(drift*horizon);
+    const z=zForCoverage(coverage);
+    const range=z*volatility*Math.sqrt(horizon);
+
+    return {
+      center,
+      low:latest*Math.exp(drift*horizon-range),
+      high:latest*Math.exp(drift*horizon+range),
+      dailyDrift:drift,
+      volatility
+    };
+  }
+
+  function predictAll(trainingRows,horizon,coverage){
+    const baseIds=["historical","ewma","momentum","mean-reversion"];
+    const base=Object.fromEntries(
+      baseIds.map(id=>[id,predictBase(id,trainingRows,horizon,coverage)])
+    );
+
+    const centers=baseIds.map(id=>base[id].center);
+    const lows=baseIds.map(id=>base[id].low);
+    const highs=baseIds.map(id=>base[id].high);
+
+    base["equal-ensemble"]={
+      center:mean(centers),
+      low:mean(lows),
+      high:mean(highs),
+      dailyDrift:mean(baseIds.map(id=>base[id].dailyDrift)),
+      volatility:mean(baseIds.map(id=>base[id].volatility))
+    };
+
+    return base;
+  }
+
+  function metricFromRecords(records,coverage){
+    if(!records.length){
+      return {
+        count:0,mape:NaN,rmsePct:NaN,biasPct:NaN,
+        directionHit:NaN,coverage:NaN,score:0
+      };
+    }
+
+    const percentageErrors=records.map(record=>
+      Math.abs(record.predicted-record.actual)/record.actual*100
+    );
+    const signedErrors=records.map(record=>
+      (record.predicted-record.actual)/record.actual*100
+    );
+    const squaredErrors=records.map(record=>
+      ((record.predicted-record.actual)/record.actual*100)**2
+    );
+
+    const directionHits=records.filter(record=>{
+      const predictedDirection=Math.sign(record.predicted-record.origin);
+      const actualDirection=Math.sign(record.actual-record.origin);
+      return predictedDirection===actualDirection ||
+        (predictedDirection===0&&actualDirection===0);
+    }).length/records.length*100;
+
+    const intervalCoverage=records.filter(record=>
+      record.actual>=record.low&&record.actual<=record.high
+    ).length/records.length*100;
+
+    const mape=mean(percentageErrors);
+    const rmsePct=Math.sqrt(mean(squaredErrors));
+    const biasPct=mean(signedErrors);
+    const targetCoverage=coverage*100;
+
+    const errorComponent=clamp(100-mape*5,0,100);
+    const directionComponent=clamp(directionHits,0,100);
+    const coverageComponent=clamp(
+      100-Math.abs(intervalCoverage-targetCoverage)*2.5,
+      0,
+      100
+    );
+    const biasComponent=clamp(100-Math.abs(biasPct)*6,0,100);
+
+    const score=clamp(
+      errorComponent*.45+
+      directionComponent*.30+
+      coverageComponent*.15+
+      biasComponent*.10,
+      0,
+      100
+    );
+
+    return {
+      count:records.length,
+      mape,
+      rmsePct,
+      biasPct,
+      directionHit:directionHits,
+      coverage:intervalCoverage,
+      score
+    };
+  }
+
+  function run(rows,options={}){
+    const horizon=Math.max(1,+options.horizon||21);
+    const lookback=Math.max(40,+options.lookback||120);
+    const step=Math.max(1,+options.step||5);
+    const interval=clamp(+options.interval||.90,.5,.99);
+    const minimumOrigin=Math.max(lookback,60);
+
+    if(rows.length<minimumOrigin+horizon+1){
+      throw new Error(
+        `データ不足です。最低でも${minimumOrigin+horizon+1}営業日程度必要です。`
+      );
+    }
+
+    const recordsByModel=Object.fromEntries(
+      MODEL_DEFINITIONS.map(model=>[model.id,[]])
+    );
+
+    for(
+      let originIndex=minimumOrigin-1;
+      originIndex+horizon<rows.length;
+      originIndex+=step
+    ){
+      const trainingStart=Math.max(0,originIndex-lookback+1);
+      const trainingRows=rows.slice(trainingStart,originIndex+1);
+      const origin=rows[originIndex].nav;
+      const actual=rows[originIndex+horizon].nav;
+      const predictions=predictAll(trainingRows,horizon,interval);
+
+      for(const model of MODEL_DEFINITIONS){
+        const prediction=predictions[model.id];
+        recordsByModel[model.id].push({
+          date:rows[originIndex].date,
+          dateText:rows[originIndex].dateText,
+          origin,
+          actual,
+          predicted:prediction.center,
+          low:prediction.low,
+          high:prediction.high
+        });
+      }
+    }
+
+    const models=MODEL_DEFINITIONS.map(model=>({
+      ...model,
+      records:recordsByModel[model.id],
+      metrics:metricFromRecords(recordsByModel[model.id],interval)
+    }));
+
+    const eligible=models.filter(model=>
+      Number.isFinite(model.metrics.rmsePct)&&model.metrics.count>0
+    );
+
+    const rawWeights=eligible.map(model=>
+      1/Math.max(model.metrics.rmsePct,0.25)**2
+    );
+    const weightTotal=rawWeights.reduce((sum,value)=>sum+value,0)||1;
+
+    const weights=Object.fromEntries(
+      eligible.map((model,index)=>[
+        model.id,
+        rawWeights[index]/weightTotal
+      ])
+    );
+
+    const latestTraining=rows.slice(-lookback);
+    const latestPredictions=predictAll(latestTraining,horizon,interval);
+    const weightedIds=["historical","ewma","momentum","mean-reversion","equal-ensemble"]
+      .filter(id=>weights[id]>0);
+
+    const weightedForecast={
+      center:weightedIds.reduce(
+        (sum,id)=>sum+latestPredictions[id].center*weights[id],
+        0
+      ),
+      low:weightedIds.reduce(
+        (sum,id)=>sum+latestPredictions[id].low*weights[id],
+        0
+      ),
+      high:weightedIds.reduce(
+        (sum,id)=>sum+latestPredictions[id].high*weights[id],
+        0
+      )
+    };
+
+    const weightedRecords=[];
+    const referenceRecords=recordsByModel["historical"];
+
+    for(let index=0;index<referenceRecords.length;index++){
+      let predicted=0;
+      let low=0;
+      let high=0;
+
+      for(const id of weightedIds){
+        const record=recordsByModel[id][index];
+        predicted+=record.predicted*weights[id];
+        low+=record.low*weights[id];
+        high+=record.high*weights[id];
+      }
+
+      weightedRecords.push({
+        ...referenceRecords[index],
+        predicted,
+        low,
+        high
+      });
+    }
+
+    const weightedMetrics=metricFromRecords(weightedRecords,interval);
+    const best=[...models].sort(
+      (left,right)=>right.metrics.score-left.metrics.score
+    )[0];
+
+    return {
+      horizon,
+      lookback,
+      step,
+      interval,
+      models,
+      weights,
+      weightedForecast,
+      weightedMetrics,
+      weightedRecords,
+      best,
+      validationCount:weightedRecords.length,
+      latestNav:rows.at(-1).nav
+    };
+  }
+
+  return Object.freeze({
+    run,
+    predictAll,
+    metricFromRecords,
+    definitions:()=>MODEL_DEFINITIONS.map(model=>({...model}))
+  });
+})();
+
+function accuracyClass(score){
+  if(score>=75)return "accuracy-high";
+  if(score>=55)return "accuracy-mid";
+  return "accuracy-low";
+}
+
+function runForecastValidation(){
+  const status=$("backtestStatus");
+
+  if(!last.d){
+    status.className="status bad";
+    status.textContent="先にCSVを読み込み、「分析を開始」を押してください。";
+    return;
+  }
+
+  status.className="status";
+  status.textContent="未来データを分離して精度を検証しています…";
+
+  setTimeout(()=>{
+    try{
+      const result=ForecastValidationEngine.run(last.d,{
+        horizon:+$("btHorizon").value,
+        lookback:+$("btLookback").value,
+        step:+$("btStep").value,
+        interval:+$("btInterval").value
+      });
+
+      last.validation=result;
+      renderForecastValidation(result);
+
+      status.className="status ok";
+      status.textContent=`精度検証が完了しました。検証回数：${result.validationCount}回`;
+    }catch(error){
+      console.error(error);
+      status.className="status bad";
+      status.textContent=`精度検証エラー：${error.message}`;
+    }
+  },40);
+}
+
+function renderForecastValidation(result){
+  const best=result.best;
+  const weighted=result.weightedMetrics;
+  const weightedReturn=(
+    result.weightedForecast.center/result.latestNav-1
+  )*100;
+
+  $("backtestCards").innerHTML=`
+    <div class="card">
+      <div class="card-title">検証回数</div>
+      <div class="card-value">${result.validationCount}</div>
+      <div class="card-sub">ウォークフォワード</div>
+    </div>
+    <div class="card">
+      <div class="card-title">最優秀モデル</div>
+      <div class="card-value">${best.label}</div>
+      <div class="card-sub">信頼度 ${best.metrics.score.toFixed(0)}点</div>
+    </div>
+    <div class="card">
+      <div class="card-title">加重予測MAPE</div>
+      <div class="card-value">${weighted.mape.toFixed(2)}%</div>
+      <div class="card-sub">平均絶対誤差率</div>
+    </div>
+    <div class="card">
+      <div class="card-title">加重方向的中率</div>
+      <div class="card-value">${weighted.directionHit.toFixed(1)}%</div>
+    </div>`;
+
+  $("backtestTable").innerHTML=`
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr>
+            <th>モデル</th>
+            <th>信頼度</th>
+            <th>MAPE</th>
+            <th>RMSE</th>
+            <th>方向的中</th>
+            <th>区間カバー</th>
+            <th>偏り</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${result.models.map(model=>`
+            <tr>
+              <td>${model.label}</td>
+              <td class="${accuracyClass(model.metrics.score)}">${model.metrics.score.toFixed(0)}点</td>
+              <td>${model.metrics.mape.toFixed(2)}%</td>
+              <td>${model.metrics.rmsePct.toFixed(2)}%</td>
+              <td>${model.metrics.directionHit.toFixed(1)}%</td>
+              <td>${model.metrics.coverage.toFixed(1)}%</td>
+              <td>${model.metrics.biasPct>=0?"+":""}${model.metrics.biasPct.toFixed(2)}%</td>
+            </tr>`).join("")}
+        </tbody>
+      </table>
+    </div>`;
+
+  const sortedWeights=Object.entries(result.weights)
+    .map(([id,weight])=>({
+      id,
+      weight,
+      label:result.models.find(model=>model.id===id)?.label||id
+    }))
+    .sort((left,right)=>right.weight-left.weight);
+
+  $("modelWeights").innerHTML=sortedWeights.map(item=>`
+    <div class="weight-row">
+      <span>${item.label}</span>
+      <div class="weight-bar"><span style="width:${item.weight*100}%"></span></div>
+      <strong>${(item.weight*100).toFixed(1)}%</strong>
+    </div>`).join("");
+
+  $("weightedForecastCards").innerHTML=`
+    <div class="card">
+      <div class="card-title">現在基準価額</div>
+      <div class="card-value">${Math.round(result.latestNav).toLocaleString()}円</div>
+    </div>
+    <div class="card">
+      <div class="card-title">精度加重中心予測</div>
+      <div class="card-value">${Math.round(result.weightedForecast.center).toLocaleString()}円</div>
+      <div class="card-sub">${pct(weightedReturn)}</div>
+    </div>
+    <div class="card">
+      <div class="card-title">予測下限</div>
+      <div class="card-value">${Math.round(result.weightedForecast.low).toLocaleString()}円</div>
+    </div>
+    <div class="card">
+      <div class="card-title">予測上限</div>
+      <div class="card-value">${Math.round(result.weightedForecast.high).toLocaleString()}円</div>
+    </div>`;
+
+  const intervalTarget=result.interval*100;
+  const coverageDifference=weighted.coverage-intervalTarget;
+  let coverageText;
+
+  if(Math.abs(coverageDifference)<=7){
+    coverageText="予測区間の広さは実績と概ね整合しています。";
+  }else if(coverageDifference<0){
+    coverageText="予測区間が狭すぎる傾向があり、想定外の値動きを過小評価しています。";
+  }else{
+    coverageText="予測区間が広めで、やや慎重な設定です。";
+  }
+
+  $("backtestComment").textContent=`検証結果
+
+最優秀モデル：
+${best.label}（信頼度 ${best.metrics.score.toFixed(0)}点）
+
+精度加重モデル：
+MAPE ${weighted.mape.toFixed(2)}%
+RMSE ${weighted.rmsePct.toFixed(2)}%
+方向的中率 ${weighted.directionHit.toFixed(1)}%
+${Math.round(intervalTarget)}%区間カバー率 ${weighted.coverage.toFixed(1)}%
+予測の平均的な偏り ${weighted.biasPct>=0?"+":""}${weighted.biasPct.toFixed(2)}%
+
+${coverageText}
+
+検証回数が少ない場合や、相場環境が大きく変わった場合は、信頼度が高くても将来の精度を保証しません。`;
+
+  $("weightedForecastComment").className="comment validation-note";
+  $("weightedForecastComment").textContent=`精度加重予測
+
+${result.horizon}営業日後の中心予測は${Math.round(result.weightedForecast.center).toLocaleString()}円です。
+過去の検証でRMSEが小さかったモデルほど、大きな重みを付けています。
+
+最も大きい重み：
+${sortedWeights[0].label} ${(sortedWeights[0].weight*100).toFixed(1)}%
+
+単一モデルの予測ではなく、複数モデルの検証結果を統合した参考値です。`;
+
+  const recent=result.weightedRecords.slice(-Math.min(60,result.weightedRecords.length));
+  lineChart(
+    $("backtestChart"),
+    [
+      {
+        name:"実績",
+        color:"#22c55e",
+        values:recent.map(record=>record.actual)
+      },
+      {
+        name:"精度加重予測",
+        color:"#3b82f6",
+        values:recent.map(record=>record.predicted)
+      }
+    ]
+  );
+}
+
 document.querySelectorAll(".tab").forEach(button=>{
   button.onclick=()=>{
     document.querySelectorAll(".tab").forEach(item=>item.classList.remove("active"));
@@ -2273,7 +2764,7 @@ document.querySelectorAll(".tab").forEach(button=>{
     $(button.dataset.page).hidden=false;
   };
 });
-$("distFile").onchange=e=>load(e.target,"dist");$("growthFile").onchange=e=>load(e.target,"growth");$("analyze").onclick=analyze;$("runMonte").onclick=runMonte;$("compareMonte").onclick=compareMonteMethods;$("calcFire").onclick=calcFire;$("calcStress").onclick=renderStress;$("analyzeMarket").onclick=()=>{analyzeMarketEnvironment();if(last.d){renderOutlook();buildMorningBrief()}};$("recalcOutlook").onclick=renderOutlook;$("saveSnapshot").onclick=saveSnapshot;$("clearHistory").onclick=clearHistory;$("whatWouldIDo").onclick=buildWhatWouldIDo;$("saveMemo").onclick=saveDailyMemo;$("clearMemo").onclick=clearDailyMemo;$("download").onclick=download;
+$("distFile").onchange=e=>load(e.target,"dist");$("growthFile").onchange=e=>load(e.target,"growth");$("analyze").onclick=analyze;$("runBacktest").onclick=runForecastValidation;$("runMonte").onclick=runMonte;$("compareMonte").onclick=compareMonteMethods;$("calcFire").onclick=calcFire;$("calcStress").onclick=renderStress;$("analyzeMarket").onclick=()=>{analyzeMarketEnvironment();if(last.d){renderOutlook();buildMorningBrief()}};$("recalcOutlook").onclick=renderOutlook;$("saveSnapshot").onclick=saveSnapshot;$("clearHistory").onclick=clearHistory;$("whatWouldIDo").onclick=buildWhatWouldIDo;$("saveMemo").onclick=saveDailyMemo;$("clearMemo").onclick=clearDailyMemo;$("download").onclick=download;
 $("taxMode").onchange=e=>$("taxRate").disabled=e.target.value==="before";
 try{const s=JSON.parse(localStorage.getItem("wcm5")||"{}");if(s.start)$("startDate").value=s.start;if(s.initial!=null)$("initial").value=s.initial;if(s.monthly!=null)$("monthly").value=s.monthly;if(s.day)$("day").value=s.day;if(s.taxMode)$("taxMode").value=s.taxMode;if(s.taxRate)$("taxRate").value=s.taxRate}catch(_){}
 if("serviceWorker"in navigator)navigator.serviceWorker.register("./sw.js").catch(()=>{});
