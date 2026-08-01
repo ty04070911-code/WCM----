@@ -1,5 +1,5 @@
 "use strict";
-const APP_VERSION="14.1";
+const APP_VERSION="15.0";
 
 /* =========================================================
    Ver.12 Integrated Professional Monte Carlo Engine
@@ -856,6 +856,8 @@ function analyze(){
     const ds=simDist(d,initial,monthly,day,tax),gs=simGrowth(g,initial,monthly,day);
     const rs=[result("分配金受取",ds.principal,ds.total),result("分配金再投資",ds.principal,ds.reinvest),result("資産成長型",gs.principal,gs.value)];
     last={d,g,ds,gs,rs};
+    $("advisorStatus").className="status";
+    $("advisorStatus").textContent="分析データを更新しました。「総合判断を実行」を押してください。";
     $("regimeStatus").className="status";
     $("regimeStatus").textContent="分析データを更新しました。「相場局面を分析」を押してください。";
     $("backtestStatus").className="status";
@@ -3245,6 +3247,562 @@ ${similarityInterpretation}
   );
 }
 
+
+/* =========================================================
+   Ver.15 Integrated Investment Advisor
+   ========================================================= */
+
+const IntegratedAdvisorEngine=(()=>{
+  function scoreRegime(regimeResult){
+    const c=regimeResult.classification;
+    const map={
+      bull:82,
+      neutral:62,
+      bear:35,
+      volatile:45
+    };
+
+    let score=map[c.regime]??55;
+
+    if(c.regime==="bull"){
+      score+=clamp((c.confidence-60)*.18,0,7);
+    }
+    if(c.regime==="bear"){
+      score-=clamp((c.confidence-60)*.15,0,7);
+    }
+    if(c.regime==="volatile"){
+      score-=clamp((c.volatileScore-60)*.12,0,8);
+    }
+
+    return clamp(score,0,100);
+  }
+
+  function scoreValidation(validationResult){
+    if(!validationResult)return 50;
+
+    const weighted=validationResult.weightedMetrics;
+    const best=validationResult.best?.metrics?.score||50;
+    const direction=weighted.directionHit||0;
+    const errorScore=clamp(100-(weighted.mape||20)*5,0,100);
+
+    return clamp(
+      best*.35+
+      direction*.30+
+      errorScore*.35,
+      0,
+      100
+    );
+  }
+
+  function scoreMonteCarlo(monteResult,riskTolerance){
+    const summary=monteResult.summary;
+    const loss=summary.lossProbability;
+    const drawdown=Math.abs(summary.medianMaxDrawdown);
+    const returnScore=clamp(50+summary.expectedMedianReturn*.65,0,100);
+
+    const riskPenaltyByTolerance={
+      low:1.25,
+      medium:1,
+      high:.75
+    }[riskTolerance]||1;
+
+    const lossScore=clamp(100-loss*riskPenaltyByTolerance,0,100);
+    const ddScore=clamp(100-drawdown*1.5*riskPenaltyByTolerance,0,100);
+
+    return clamp(
+      returnScore*.40+
+      lossScore*.35+
+      ddScore*.25,
+      0,
+      100
+    );
+  }
+
+  function scoreDrawdown(rows,riskTolerance){
+    const current=Math.abs((()=>{
+      let high=-Infinity;
+      let latest=0;
+      for(const row of rows){
+        high=Math.max(high,row.nav);
+        latest=high>0?row.nav/high-1:0;
+      }
+      return latest*100;
+    })());
+
+    const toleranceFactor={
+      low:1.35,
+      medium:1,
+      high:.75
+    }[riskTolerance]||1;
+
+    return clamp(100-current*4*toleranceFactor,0,100);
+  }
+
+  function scoreVolatility(rows,riskTolerance){
+    const annualVol=vol(rows);
+    const acceptable={
+      low:18,
+      medium:25,
+      high:35
+    }[riskTolerance]||25;
+
+    return clamp(100-Math.max(0,annualVol-acceptable)*3.3,15,100);
+  }
+
+  function scoreSimilarity(regimeResult){
+    const summary=regimeResult.summary;
+    const topSimilarity=regimeResult.similar[0]?.similarity||0;
+    const positive=summary.positiveProbability;
+    const futureScore=clamp(50+summary.averageFutureReturn*230,0,100);
+
+    return clamp(
+      topSimilarity*.35+
+      positive*.35+
+      futureScore*.30,
+      0,
+      100
+    );
+  }
+
+  function actionFromScore(score,riskTolerance,regime){
+    let adjusted=score;
+
+    if(riskTolerance==="low")adjusted-=5;
+    if(riskTolerance==="high")adjusted+=4;
+    if(regime==="volatile")adjusted-=5;
+    if(regime==="bear")adjusted-=8;
+
+    if(adjusted>=88){
+      return {
+        label:"積極買い候補",
+        className:"advisor-action-strong",
+        message:"積立を継続し、追加投資は複数回に分けて検討できる水準です。"
+      };
+    }
+    if(adjusted>=74){
+      return {
+        label:"積立継続",
+        className:"advisor-action-buy",
+        message:"通常積立の継続を中心にし、一括投資は分割する判断が適しています。"
+      };
+    }
+    if(adjusted>=58){
+      return {
+        label:"様子を見ながら積立",
+        className:"advisor-action-hold",
+        message:"方向感が十分ではないため、通常積立を維持し、大きな追加投資は急がない判断です。"
+      };
+    }
+    if(adjusted>=40){
+      return {
+        label:"慎重運用",
+        className:"advisor-action-cautious",
+        message:"下落や高ボラティリティへの備えを優先し、追加投資は少額・分割が適しています。"
+      };
+    }
+
+    return {
+      label:"リスク警戒",
+      className:"advisor-action-risk",
+      message:"元本割れや急落の可能性を重視し、新規投資より資金管理を優先する局面です。"
+    };
+  }
+
+  function grade(score){
+    if(score>=90)return "S";
+    if(score>=80)return "A";
+    if(score>=70)return "B";
+    if(score>=60)return "C";
+    if(score>=45)return "D";
+    return "E";
+  }
+
+  function confidence(validationResult,regimeResult,monteResult){
+    const validationScore=validationResult
+      ?validationResult.weightedMetrics.directionHit
+      :50;
+
+    const regimeConfidence=regimeResult.classification.confidence;
+    const modelSpread=monteResult.modelSpread??25;
+    const monteConfidence=clamp(100-modelSpread*1.3,25,95);
+
+    return clamp(
+      validationScore*.40+
+      regimeConfidence*.35+
+      monteConfidence*.25,
+      0,
+      100
+    );
+  }
+
+  function combine({
+    rows,
+    regimeResult,
+    validationResult,
+    monteResult,
+    riskTolerance
+  }){
+    const components={
+      regime:scoreRegime(regimeResult),
+      validation:scoreValidation(validationResult),
+      monteCarlo:scoreMonteCarlo(monteResult,riskTolerance),
+      drawdown:scoreDrawdown(rows,riskTolerance),
+      volatility:scoreVolatility(rows,riskTolerance),
+      similarity:scoreSimilarity(regimeResult)
+    };
+
+    const weights={
+      regime:.25,
+      validation:.25,
+      monteCarlo:.20,
+      drawdown:.10,
+      volatility:.10,
+      similarity:.10
+    };
+
+    const total=Object.entries(weights).reduce(
+      (sum,[key,weight])=>sum+components[key]*weight,
+      0
+    );
+
+    const finalScore=clamp(total,0,100);
+    const action=actionFromScore(
+      finalScore,
+      riskTolerance,
+      regimeResult.classification.regime
+    );
+
+    return {
+      score:finalScore,
+      grade:grade(finalScore),
+      action,
+      confidence:confidence(
+        validationResult,
+        regimeResult,
+        monteResult
+      ),
+      components,
+      weights
+    };
+  }
+
+  return Object.freeze({
+    combine,
+    grade,
+    actionFromScore
+  });
+})();
+
+function buildAdvisorMonte(horizon,runs){
+  const days=Math.max(21,horizon);
+  const years=Math.max(1,Math.ceil(days/252));
+
+  const methods=[
+    "iid",
+    "moving-block",
+    "stationary",
+    "random-block",
+    "hybrid"
+  ];
+
+  const results=methods.map(method=>
+    MonteCarloEngine.simulate(
+      returns(last.d),
+      {
+        ...getMonteConfig(method),
+        years,
+        runs,
+        monthlyContribution:+$("monthly").value||0,
+        captureYearly:false
+      },
+      getMonteSettings()
+    )
+  );
+
+  const medianValues=results.map(result=>result.summary.median);
+  const medianAverage=mean(medianValues);
+  const medianMin=Math.min(...medianValues);
+  const medianMax=Math.max(...medianValues);
+  const spread=medianAverage>0
+    ?(medianMax-medianMin)/medianAverage*100
+    :0;
+
+  const averageSummary={
+    p05:mean(results.map(result=>result.summary.p05)),
+    median:medianAverage,
+    p95:mean(results.map(result=>result.summary.p95)),
+    lossProbability:mean(results.map(result=>result.summary.lossProbability)),
+    medianMaxDrawdown:mean(results.map(result=>result.summary.medianMaxDrawdown)),
+    expectedMedianReturn:mean(results.map(result=>result.summary.expectedMedianReturn))
+  };
+
+  return {
+    results,
+    summary:averageSummary,
+    modelSpread:spread
+  };
+}
+
+function ensureAdvisorValidation(horizon){
+  const lookback=horizon<=21?120:252;
+  const step=horizon<=21?5:10;
+
+  return ForecastValidationEngine.run(last.d,{
+    horizon,
+    lookback,
+    step,
+    interval:.90
+  });
+}
+
+function ensureAdvisorRegime(horizon){
+  const window=horizon<=21?63:126;
+
+  return MarketRegimeEngine.analyze(last.d,{
+    window,
+    horizon,
+    count:5
+  });
+}
+
+function runIntegratedAdvisor(){
+  const status=$("advisorStatus");
+
+  if(!last.d){
+    status.className="status bad";
+    status.textContent="先にCSVを読み込み、「分析を開始」を押してください。";
+    return;
+  }
+
+  status.className="status";
+  status.textContent="相場局面・精度検証・モンテカルロを統合しています…";
+
+  setTimeout(()=>{
+    try{
+      const horizon=+$("advisorHorizon").value||21;
+      const riskTolerance=$("advisorRisk").value;
+      const runs=+$("advisorRuns").value||1000;
+
+      const regimeResult=ensureAdvisorRegime(horizon);
+      const validationResult=ensureAdvisorValidation(horizon);
+      const monteResult=buildAdvisorMonte(horizon,runs);
+
+      const advisor=IntegratedAdvisorEngine.combine({
+        rows:last.d,
+        regimeResult,
+        validationResult,
+        monteResult,
+        riskTolerance
+      });
+
+      const result={
+        horizon,
+        riskTolerance,
+        runs,
+        regimeResult,
+        validationResult,
+        monteResult,
+        advisor
+      };
+
+      last.advisor=result;
+      renderIntegratedAdvisor(result);
+
+      status.className="status ok";
+      status.textContent="総合判断が完了しました。";
+    }catch(error){
+      console.error(error);
+      status.className="status bad";
+      status.textContent=`総合判断エラー：${error.message}`;
+    }
+  },60);
+}
+
+function renderIntegratedAdvisor(result){
+  const {advisor,regimeResult,validationResult,monteResult}=result;
+  const summary=monteResult.summary;
+  const regime=regimeLabel(regimeResult.classification.regime);
+  const latest=last.d.at(-1).nav;
+  const forecastReturn=latest>0
+    ?(summary.median/latest-1)*100
+    :0;
+
+  $("advisorHero").innerHTML=`
+    <div class="advisor-score">${advisor.score.toFixed(0)}点</div>
+    <div class="advisor-grade">総合ランク ${advisor.grade}</div>
+    <div class="small" style="margin-top:8px">
+      判断信頼度 ${advisor.confidence.toFixed(0)}%
+    </div>
+    <span class="advisor-action-pill ${advisor.action.className}">
+      ${advisor.action.label}
+    </span>`;
+
+  $("advisorScoreBar").innerHTML=`
+    <div class="scorebar">
+      <span style="width:${advisor.score}%"></span>
+    </div>`;
+
+  $("advisorAction").textContent=`AI総合判断
+
+${advisor.action.message}
+
+現在の相場局面：
+${regime}
+信頼度 ${regimeResult.classification.confidence.toFixed(0)}%
+
+予測精度：
+方向的中率 ${validationResult.weightedMetrics.directionHit.toFixed(1)}%
+MAPE ${validationResult.weightedMetrics.mape.toFixed(2)}%
+
+この判定は投資助言ではなく、読み込んだ過去データに基づく参考情報です。`;
+
+  $("advisorForecastCards").innerHTML=`
+    <div class="card">
+      <div class="card-title">現在基準価額</div>
+      <div class="card-value">${Math.round(latest).toLocaleString()}円</div>
+    </div>
+    <div class="card">
+      <div class="card-title">統合中心予測</div>
+      <div class="card-value">${Math.round(summary.median).toLocaleString()}円</div>
+      <div class="card-sub">${pct(forecastReturn)}</div>
+    </div>
+    <div class="card">
+      <div class="card-title">慎重ケース</div>
+      <div class="card-value">${Math.round(summary.p05).toLocaleString()}円</div>
+    </div>
+    <div class="card">
+      <div class="card-title">楽観ケース</div>
+      <div class="card-value">${Math.round(summary.p95).toLocaleString()}円</div>
+    </div>`;
+
+  $("advisorForecastComment").textContent=`統合予測
+
+予測期間：${result.horizon}営業日
+使用モデル：5手法
+試行回数：各${result.runs.toLocaleString()}回
+モデル間中央値差：${monteResult.modelSpread.toFixed(1)}%
+
+元本割れ確率：
+${summary.lossProbability.toFixed(1)}%
+
+モデル間の差が大きいほど、予測への依存は控えめにしてください。`;
+
+  const labels={
+    regime:"相場局面",
+    validation:"予測精度",
+    monteCarlo:"モンテカルロ",
+    drawdown:"ドローダウン",
+    volatility:"ボラティリティ",
+    similarity:"類似局面"
+  };
+
+  $("advisorComponents").innerHTML=Object.entries(advisor.components)
+    .map(([key,value])=>`
+      <div class="advisor-component">
+        <span>${labels[key]}</span>
+        <div class="advisor-component-bar">
+          <span style="width:${value}%"></span>
+        </div>
+        <strong>${value.toFixed(0)}点</strong>
+      </div>`)
+    .join("");
+
+  const bestModel=validationResult.best;
+  const topSimilar=regimeResult.similar[0];
+
+  $("advisorEvidence").textContent=`判断根拠
+
+相場局面：
+${regime}
+
+バックテスト最優秀モデル：
+${bestModel.label}
+信頼度 ${bestModel.metrics.score.toFixed(0)}点
+
+最も似た過去局面：
+${topSimilar?.dateText||"該当なし"}
+類似度 ${topSimilar?.similarity.toFixed(1)||"0.0"}%
+
+類似局面後の上昇割合：
+${regimeResult.summary.positiveProbability.toFixed(1)}%
+
+これらの根拠が同じ方向を示すほど、総合判断の信頼度が高くなります。`;
+
+  $("advisorModelTable").innerHTML=`
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr>
+            <th>モデル</th>
+            <th>中央値</th>
+            <th>下位5%</th>
+            <th>上位5%</th>
+            <th>元本割れ</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${monteResult.results.map(item=>`
+            <tr>
+              <td>${MonteCarloEngine.methodLabel(item.config)}</td>
+              <td>${yen(item.summary.median)}</td>
+              <td>${yen(item.summary.p05)}</td>
+              <td>${yen(item.summary.p95)}</td>
+              <td>${item.summary.lossProbability.toFixed(1)}%</td>
+            </tr>`).join("")}
+        </tbody>
+      </table>
+    </div>`;
+
+  $("advisorModelComment").textContent=`モデル統合
+
+5手法の中央値を平均して、単一モデルへの依存を抑えています。
+
+モデル間中央値差：
+${monteResult.modelSpread.toFixed(1)}%
+
+差が15%未満なら比較的安定、35%以上ならモデル依存性が高いと考えます。`;
+
+  const annualVol=vol(last.d);
+  const currentDd=(()=>{
+    let high=-Infinity;
+    let dd=0;
+    for(const row of last.d){
+      high=Math.max(high,row.nav);
+      dd=high>0?row.nav/high-1:0;
+    }
+    return dd*100;
+  })();
+
+  $("advisorRiskCards").innerHTML=`
+    <div class="card">
+      <div class="card-title">元本割れ確率</div>
+      <div class="card-value">${summary.lossProbability.toFixed(1)}%</div>
+    </div>
+    <div class="card">
+      <div class="card-title">最大DD中央値</div>
+      <div class="card-value">${summary.medianMaxDrawdown.toFixed(1)}%</div>
+    </div>
+    <div class="card">
+      <div class="card-title">現在DD</div>
+      <div class="card-value">${currentDd.toFixed(1)}%</div>
+    </div>
+    <div class="card">
+      <div class="card-title">年率ボラティリティ</div>
+      <div class="card-value">${annualVol.toFixed(1)}%</div>
+    </div>`;
+
+  let riskText;
+  if(summary.lossProbability<20&&Math.abs(summary.medianMaxDrawdown)<25){
+    riskText="総合リスクは比較的低めです。ただし、急変時には過去より大きく下落する可能性があります。";
+  }else if(summary.lossProbability<40&&Math.abs(summary.medianMaxDrawdown)<40){
+    riskText="総合リスクは中程度です。通常積立を中心にし、追加投資は分割する方が安全です。";
+  }else{
+    riskText="総合リスクは高めです。元本割れと大幅下落を想定し、無理な追加投資は避ける判断が適しています。";
+  }
+
+  $("advisorRiskComment").textContent=riskText;
+}
+
 document.querySelectorAll(".tab").forEach(button=>{
   button.onclick=()=>{
     document.querySelectorAll(".tab").forEach(item=>item.classList.remove("active"));
@@ -3253,13 +3811,8 @@ document.querySelectorAll(".tab").forEach(button=>{
     $(button.dataset.page).hidden=false;
   };
 });
-$("distFile").onchange=e=>load(e.target,"dist");$("growthFile").onchange=e=>load(e.target,"growth");$("analyze").onclick=analyze;$("runBacktest").onclick=runForecastValidation;$("runRegime").onclick=runRegimeAnalysis;$("runMonte").onclick=runMonte;$("compareMonte").onclick=compareMonteMethods;$("calcFire").onclick=calcFire;$("calcStress").onclick=renderStress;$("analyzeMarket").onclick=()=>{analyzeMarketEnvironment();if(last.d){renderOutlook();buildMorningBrief()}};$("recalcOutlook").onclick=renderOutlook;$("saveSnapshot").onclick=saveSnapshot;$("clearHistory").onclick=clearHistory;$("whatWouldIDo").onclick=buildWhatWouldIDo;$("saveMemo").onclick=saveDailyMemo;$("clearMemo").onclick=clearDailyMemo;$("download").onclick=download;
+$("distFile").onchange=e=>load(e.target,"dist");$("growthFile").onchange=e=>load(e.target,"growth");$("analyze").onclick=analyze;$("runBacktest").onclick=runForecastValidation;$("runRegime").onclick=runRegimeAnalysis;$("runAdvisor").onclick=runIntegratedAdvisor;$("runMonte").onclick=runMonte;$("compareMonte").onclick=compareMonteMethods;$("calcFire").onclick=calcFire;$("calcStress").onclick=renderStress;$("analyzeMarket").onclick=()=>{analyzeMarketEnvironment();if(last.d){renderOutlook();buildMorningBrief()}};$("recalcOutlook").onclick=renderOutlook;$("saveSnapshot").onclick=saveSnapshot;$("clearHistory").onclick=clearHistory;$("whatWouldIDo").onclick=buildWhatWouldIDo;$("saveMemo").onclick=saveDailyMemo;$("clearMemo").onclick=clearDailyMemo;$("download").onclick=download;
 $("taxMode").onchange=e=>$("taxRate").disabled=e.target.value==="before";
 try{const s=JSON.parse(localStorage.getItem("wcm5")||"{}");if(s.start)$("startDate").value=s.start;if(s.initial!=null)$("initial").value=s.initial;if(s.monthly!=null)$("monthly").value=s.monthly;if(s.day)$("day").value=s.day;if(s.taxMode)$("taxMode").value=s.taxMode;if(s.taxRate)$("taxRate").value=s.taxRate}catch(_){}
 if("serviceWorker"in navigator)navigator.serviceWorker.register("./sw.js").catch(()=>{});
 restoreMarketInputs();
-
-restoreOutlookSettings();
-renderHistory();
-
-restoreDailyMemo();
