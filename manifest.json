@@ -1,11 +1,11 @@
 {
-  "name": "WCM Analyzer Pro Ver.7",
+  "name": "WCM Analyzer Pro Ver.8",
   "short_name": "WCM Analyzer",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#07101d",
   "theme_color": "#08111f",
-  "description": "WCM専用スコア・積立判定・分配予測・暴落テスト・FIRE成功率を搭載",
+  "description": "分割構成・市場環境分析対応のWCM専用投資分析アプリ",
   "icons": [
     {
       "src": "./icon-192.svg",
