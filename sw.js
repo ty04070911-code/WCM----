@@ -1,10 +1,9 @@
-const CACHE="wcm-analyzer-v12-pro";
+const CACHE="wcm-analyzer-v12-integrated";
 const ASSETS=[
   "./",
   "./index.html",
   "./style.css",
   "./app.js",
-  "./montecarlo-engine.js",
   "./manifest.json",
   "./icon-192.svg",
   "./icon-512.svg"
@@ -26,3 +25,4 @@ self.addEventListener("activate",event=>{
     )
   );
   self.clients.claim();
+});
