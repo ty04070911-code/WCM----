@@ -216,3 +216,57 @@ textarea{
 .similarity-high{color:#86efac;font-weight:900}
 .similarity-mid{color:#fde68a;font-weight:900}
 .similarity-low{color:#fca5a5;font-weight:900}
+
+
+/* Ver.15 Integrated Advisor */
+.advisor-hero{
+  background:
+    radial-gradient(circle at top right,rgba(59,130,246,.18),transparent 35%),
+    var(--panel);
+}
+.advisor-score{
+  font-size:54px;
+  font-weight:950;
+  letter-spacing:-2px;
+  line-height:1;
+}
+.advisor-grade{
+  font-size:24px;
+  font-weight:900;
+  margin-top:8px;
+}
+.advisor-action-pill{
+  display:inline-block;
+  margin-top:12px;
+  padding:10px 16px;
+  border-radius:999px;
+  font-size:16px;
+  font-weight:950;
+}
+.advisor-action-strong{background:#14532d;color:#bbf7d0}
+.advisor-action-buy{background:#166534;color:#dcfce7}
+.advisor-action-hold{background:#78350f;color:#fde68a}
+.advisor-action-cautious{background:#9a3412;color:#ffedd5}
+.advisor-action-risk{background:#7f1d1d;color:#fecaca}
+.advisor-component{
+  display:grid;
+  grid-template-columns:minmax(120px,1fr) 2fr 64px;
+  align-items:center;
+  gap:10px;
+  margin:12px 0;
+}
+.advisor-component-bar{
+  height:12px;
+  border-radius:999px;
+  background:#0b1423;
+  border:1px solid #334155;
+  overflow:hidden;
+}
+.advisor-component-bar span{
+  display:block;
+  height:100%;
+  background:linear-gradient(90deg,#2563eb,#22c55e);
+}
+.advisor-comment{
+  border-left:5px solid #22c55e;
+}

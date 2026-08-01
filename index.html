@@ -12,15 +12,15 @@
   <meta name="apple-mobile-web-app-title" content="WCM Analyzer">
   <link rel="manifest" href="./manifest.json">
   <link rel="apple-touch-icon" href="./icon-192.svg">
-  <title>WCM Analyzer Pro Ver.14.1</title>
+  <title>WCM Analyzer Pro Ver.15</title>
 <link rel="stylesheet" href="./style.css?v=8">
 </head>
 <body>
 <main class="app">
 <header>
   <h1>WCM Analyzer Pro</h1>
-  <span class="badge">iPhone Edition Ver.14.1</span>
-  <p class="lead">CSVは端末内だけで処理します。Ver.12では、Ver.14では、現在の相場局面を判定し、過去の似た局面と、その後の値動きを分析するマーケットレジーム機能を追加しました。</p>
+  <span class="badge">iPhone Edition Ver.15</span>
+  <p class="lead">CSVは端末内だけで処理します。Ver.12では、Ver.15では、相場局面・精度検証・モンテカルロを統合し、総合スコア、推奨行動、信頼度、根拠を1画面にまとめました。</p>
 </header>
 
 <section class="panel">
@@ -58,6 +58,7 @@
     <button class="tab" data-page="forecast">将来予測</button>
     <button class="tab" data-page="validation">精度検証</button>
     <button class="tab" data-page="regime">相場局面</button>
+    <button class="tab" data-page="advisor">総合判断</button>
     <button class="tab" data-page="monte">モンテカルロ</button>
     <button class="tab" data-page="stress">暴落テスト</button>
     <button class="tab" data-page="fire">FIRE診断</button>
@@ -353,6 +354,84 @@
     <div class="panel">
       <h2>類似度と将来リターン</h2>
       <div id="similarChart" class="chart"></div>
+    </div>
+  </section>
+
+  <section id="advisor" class="page" hidden>
+    <div class="panel">
+      <h2>WCM AI 総合判断</h2>
+      <p class="small">
+        相場局面、予測精度、モンテカルロ、ドローダウン、ボラティリティ、
+        類似局面を統合して参考判断を作成します。
+      </p>
+
+      <div class="grid">
+        <div class="field">
+          <label>判断期間</label>
+          <select id="advisorHorizon">
+            <option value="21" selected>1か月</option>
+            <option value="63">3か月</option>
+            <option value="126">半年</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>リスク許容度</label>
+          <select id="advisorRisk">
+            <option value="low">低い</option>
+            <option value="medium" selected>標準</option>
+            <option value="high">高い</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>モンテカルロ試行回数</label>
+          <select id="advisorRuns">
+            <option value="500">500回</option>
+            <option value="1000" selected>1,000回</option>
+            <option value="3000">3,000回</option>
+          </select>
+        </div>
+      </div>
+
+      <button id="runAdvisor" class="primary">総合判断を実行</button>
+
+      <div id="advisorStatus" class="status" style="margin-top:14px">
+        CSV分析後に「総合判断を実行」を押してください。
+      </div>
+    </div>
+
+    <div class="panel advisor-hero">
+      <h2>総合評価</h2>
+      <div id="advisorHero"></div>
+      <div id="advisorScoreBar" style="margin-top:14px"></div>
+      <div id="advisorAction" class="comment advisor-comment" style="margin-top:14px">
+        総合判断をここに表示します。
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>統合予測</h2>
+      <div id="advisorForecastCards" class="cards"></div>
+      <div id="advisorForecastComment" class="comment" style="margin-top:14px"></div>
+    </div>
+
+    <div class="panel">
+      <h2>判断根拠</h2>
+      <div id="advisorComponents"></div>
+      <div id="advisorEvidence" class="comment" style="margin-top:14px"></div>
+    </div>
+
+    <div class="panel">
+      <h2>モデル統合</h2>
+      <div id="advisorModelTable"></div>
+      <div id="advisorModelComment" class="comment" style="margin-top:14px"></div>
+    </div>
+
+    <div class="panel">
+      <h2>総合リスク</h2>
+      <div id="advisorRiskCards" class="cards"></div>
+      <div id="advisorRiskComment" class="comment" style="margin-top:14px"></div>
     </div>
   </section>
 

@@ -1,11 +1,11 @@
 {
-  "name": "WCM Analyzer Pro Ver.14",
+  "name": "WCM Analyzer Pro Ver.15",
   "short_name": "WCM Analyzer",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#07101d",
   "theme_color": "#08111f",
-  "description": "マーケットレジーム判定と過去の類似局面分析を搭載",
+  "description": "相場局面・精度検証・モンテカルロを統合したAI総合判断機能を搭載",
   "icons": [
     {
       "src": "./icon-192.svg",
