@@ -1,9 +1,10 @@
-const CACHE="wcm-analyzer-v11-1";
+const CACHE="wcm-analyzer-v12-pro";
 const ASSETS=[
   "./",
   "./index.html",
   "./style.css",
   "./app.js",
+  "./montecarlo-engine.js",
   "./manifest.json",
   "./icon-192.svg",
   "./icon-512.svg"
@@ -25,18 +26,3 @@ self.addEventListener("activate",event=>{
     )
   );
   self.clients.claim();
-});
-
-self.addEventListener("fetch",event=>{
-  if(event.request.method!=="GET")return;
-
-  event.respondWith(
-    fetch(event.request,{cache:"no-store"})
-      .then(response=>{
-        const copy=response.clone();
-        caches.open(CACHE).then(cache=>cache.put(event.request,copy));
-        return response;
-      })
-      .catch(()=>caches.match(event.request))
-  );
-});
