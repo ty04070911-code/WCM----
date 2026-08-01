@@ -1,6 +1,6 @@
-x. const CACHE = "wcm-analyzer-v6";
+　const CACHE="wcm-analyzer-v7";
 
-const ASSETS = [
+const ASSETS=[
   "./",
   "./index.html",
   "./manifest.json",
@@ -8,35 +8,36 @@ const ASSETS = [
   "./icon-512.svg"
 ];
 
-self.addEventListener("install", event => {
+self.addEventListener("install",event=>{
   event.waitUntil(
-    caches.open(CACHE).then(cache => cache.addAll(ASSETS))
+    caches.open(CACHE).then(cache=>cache.addAll(ASSETS))
   );
   self.skipWaiting();
 });
 
-self.addEventListener("activate", event => {
+self.addEventListener("activate",event=>{
   event.waitUntil(
-    caches.keys().then(keys =>
+    caches.keys().then(keys=>
       Promise.all(
-        keys.filter(key => key !== CACHE)
-          .map(key => caches.delete(key))
+        keys
+          .filter(key=>key!==CACHE)
+          .map(key=>caches.delete(key))
       )
     )
   );
   self.clients.claim();
 });
 
-self.addEventListener("fetch", event => {
+self.addEventListener("fetch",event=>{
   event.respondWith(
     fetch(event.request)
-      .then(response => {
-        const copy = response.clone();
-        caches.open(CACHE).then(cache => {
-          cache.put(event.request, copy);
+      .then(response=>{
+        const copy=response.clone();
+        caches.open(CACHE).then(cache=>{
+          cache.put(event.request,copy);
         });
         return response;
       })
-      .catch(() => caches.match(event.request))
+      .catch(()=>caches.match(event.request))
   );
 });
