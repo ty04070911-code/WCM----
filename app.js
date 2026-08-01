@@ -1,5 +1,5 @@
 "use strict";
-const APP_VERSION="12.0";
+const APP_VERSION="12.0-final";
 
 /* =========================================================
    Ver.12 Integrated Professional Monte Carlo Engine
@@ -13,7 +13,7 @@ const APP_VERSION="12.0";
  * UIやDOMに依存しない独立シミュレーションエンジン。
  * 入力は日次単純リターン、内部計算は対数リターンで行う。
  */
-(function(global){
+const MonteCarloEngine=(()=>{
   const VERSION = "12.0.0";
 
   function assert(condition, message){
@@ -478,7 +478,7 @@ const APP_VERSION="12.0";
     }
   }
 
-  global.MonteCarloEngine=Object.freeze({
+  return Object.freeze({
     version:()=>VERSION,
     diagnose,
     simulate,
@@ -486,7 +486,7 @@ const APP_VERSION="12.0";
     recommendedBlockLength,
     autocorrelation
   });
-})(typeof window!=="undefined" ? window : globalThis);
+})();
 
 let distData=null,growthData=null,last={};
 const $=id=>document.getElementById(id);
@@ -875,6 +875,29 @@ function analyze(){
     $("resultArea").scrollIntoView({behavior:"smooth"})
   }catch(e){$("mainStatus").className="status bad";$("mainStatus").textContent=`分析エラー：${e.message}`}
 }
+
+function verifyMonteCarloEngine(){
+  const required=[
+    "simulate",
+    "diagnose",
+    "methodLabel",
+    "recommendedBlockLength",
+    "version"
+  ];
+
+  const missing=required.filter(
+    name=>typeof MonteCarloEngine?.[name]!=="function"
+  );
+
+  if(missing.length){
+    throw new Error(
+      `モンテカルロエンジン初期化エラー: ${missing.join(", ")}`
+    );
+  }
+
+  return true;
+}
+
 function getMonteSettings(){
   return {
     driftPolicy:$("mcDriftPolicy").value,
@@ -908,8 +931,8 @@ function getMonteConfig(methodOverride=null){
 }
 
 function runProfessionalMonte(methodOverride=null){
+  verifyMonteCarloEngine();
   if(!last.d)throw new Error("先にCSVを読み込み、分析を開始してください。");
-  if(!window.MonteCarloEngine)throw new Error("モンテカルロエンジンを読み込めませんでした。");
 
   return MonteCarloEngine.simulate(
     returns(last.d),
@@ -919,7 +942,8 @@ function runProfessionalMonte(methodOverride=null){
 }
 
 function renderMonteDiagnostics(){
-  if(!last.d||!window.MonteCarloEngine)return;
+  verifyMonteCarloEngine();
+  if(!last.d)return;
 
   try{
     const diagnostics=MonteCarloEngine.diagnose(
@@ -1008,7 +1032,9 @@ function runMonte(){
     const result=runProfessionalMonte();
     renderSingleMonte(result);
   }catch(error){
-    $("monteResult").innerHTML=`<div class="status bad">${error.message}</div>`;
+    console.error(error);
+    $("monteResult").innerHTML=
+      `<div class="status bad">モンテカルロ実行エラー：${error.message}</div>`;
   }
 }
 
