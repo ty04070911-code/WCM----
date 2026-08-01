@@ -9,7 +9,7 @@
   <meta name="apple-mobile-web-app-title" content="WCM Analyzer">
   <link rel="manifest" href="./manifest.json">
   <link rel="apple-touch-icon" href="./icon-192.svg">
-  <title>WCM Analyzer Pro Ver.5</title>
+  <title>WCM Analyzer Pro Ver.6</title>
 <style>
 :root{
   --bg:#07101d;--panel:#111c2e;--panel2:#17243a;--line:#2d3d57;
@@ -76,8 +76,8 @@ th{background:#17243a;color:#bfdbfe}
 <main class="app">
 <header>
   <h1>WCM Analyzer Pro</h1>
-  <span class="badge">iPhone Edition Ver.5</span>
-  <p class="lead">CSVは端末内だけで処理します。受取型・再投資型・資産成長型の比較、将来予測、モンテカルロ、分配金予測、FIRE診断に対応しています。</p>
+  <span class="badge">iPhone Edition Ver.6</span>
+  <p class="lead">CSVは端末内だけで処理します。Ver.6では、CSVの日次リターンを直接再抽出する実データ型モンテカルロに対応しました。</p>
 </header>
 
 <section class="panel">
@@ -129,14 +129,20 @@ th{background:#17243a;color:#bfdbfe}
 
   <section id="monte" class="page" hidden>
     <div class="panel">
-      <h2>モンテカルロ</h2>
+      <h2>実データ型モンテカルロ</h2>
       <div class="grid">
         <div class="field"><label>予測年数</label><select id="mcYears"><option>1</option><option selected>5</option><option>10</option><option>20</option></select></div>
-        <div class="field"><label>試行回数</label><select id="mcRuns"><option>500</option><option selected>1000</option><option>3000</option></select></div>
+        <div class="field"><label>試行回数</label><select id="mcRuns"><option>500</option><option selected>1000</option><option>3000</option><option>5000</option></select></div>
+        <div class="field"><label>モデル</label><select id="mcModel"><option value="bootstrap" selected>実データ・ブートストラップ</option><option value="block">実データ・ブロック法</option><option value="normal">比較用・正規分布</option></select></div>
+        <div class="field"><label>元本割れ判定</label><select id="lossBasis"><option value="total" selected>最終時点の累計投資元本</option><option value="initial">現在評価額</option></select></div>
+        <div class="field"><label>乱数シード</label><input id="mcSeed" type="number" value="20260801" step="1"></div>
+        <div class="field"><label>ブロック日数</label><select id="blockDays"><option>5</option><option selected>21</option><option>63</option></select></div>
       </div>
-      <button id="runMonte" class="primary">モンテカルロを実行</button>
+      <button id="runMonte" class="primary">実データでシミュレーション</button>
+      <p class="small">ブートストラップは、CSVに含まれる実際の日次リターンを繰り返し抽出します。ブロック法は連続した値動きをまとめて抽出します。</p>
       <div id="monteResult" style="margin-top:14px"></div>
       <div id="monteChart" class="chart" style="margin-top:14px"></div>
+      <div id="yearlyMonte" style="margin-top:14px"></div>
     </div>
   </section>
 
@@ -252,7 +258,11 @@ function simGrowth(rows,initial,monthly,day){
   for(const r of rows){const a=p.get(r.dateText)||0;if(a>0){units+=a/r.nav*10000;principal+=a}h.push({date:r.date,dateText:r.dateText,principal,value:units*r.nav/10000})}
   return {principal,value:h.at(-1).value,history:h}
 }
-function normal(){let u=0,v=0;while(!u)u=Math.random();while(!v)v=Math.random();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v)}
+function makeRng(seed){let state=(Number(seed)||1)>>>0;return function(){state=(1664525*state+1013904223)>>>0;return state/4294967296}}
+function normalFromRng(rng){let u=0,v=0;while(!u)u=rng();while(!v)v=rng();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v)}
+function quantile(sorted,p){if(!sorted.length)return 0;const index=(sorted.length-1)*p,lo=Math.floor(index),hi=Math.ceil(index);return lo===hi?sorted[lo]:sorted[lo]+(sorted[hi]-sorted[lo])*(index-lo)}
+function sampleBootstrap(series,rng){return series[Math.floor(rng()*series.length)]}
+function createBlockSampler(series,blockSize,rng){let block=[],position=0;return function(){if(position>=block.length){const maxStart=Math.max(series.length-blockSize,0),start=Math.floor(rng()*(maxStart+1));block=series.slice(start,start+blockSize);if(!block.length)block=[0];position=0}return block[position++]}}
 function forecast(rows,days){
   const r=returns(rows).slice(-120),m=mean(r),s=sd(r),latest=rows.at(-1).nav;
   const center=latest*Math.exp(m*days),range=1.645*s*Math.sqrt(days);
@@ -302,12 +312,44 @@ function analyze(){
 }
 function runMonte(){
   if(!last.d)return;
-  const years=+$("mcYears").value,runs=+$("mcRuns").value,r=returns(last.d),m=mean(r),s=sd(r),steps=years*12,monthly=+$("monthly").value||0,start=last.ds.reinvest,vals=[];
-  for(let k=0;k<runs;k++){let v=start;for(let i=0;i<steps;i++)v=v*Math.exp(m*21-.5*s*s*21+s*Math.sqrt(21)*normal())+monthly;vals.push(v)}
-  vals.sort((a,b)=>a-b);const q=p=>vals[Math.floor((vals.length-1)*p)],low=q(.05),med=q(.5),high=q(.95);
-  $("monteResult").innerHTML=`<div class="cards"><div class="card"><div class="card-title">下位5%</div><div class="card-value">${yen(low)}</div></div><div class="card"><div class="card-title">中央値</div><div class="card-value">${yen(med)}</div></div><div class="card"><div class="card-title">上位5%</div><div class="card-value">${yen(high)}</div></div><div class="card"><div class="card-title">元本割れ確率</div><div class="card-value">${(vals.filter(v=>v<last.ds.principal+monthly*steps).length/runs*100).toFixed(1)}%</div></div></div>`;
-  const buckets=20,min=vals[0],max=vals.at(-1),counts=Array(buckets).fill(0);vals.forEach(v=>counts[Math.min(buckets-1,Math.floor((v-min)/(max-min||1)*buckets))]++);
-  lineChart($("monteChart"),[{name:"資産分布",color:"#3b82f6",values:counts}])
+  const years=+$("mcYears").value,runs=+$("mcRuns").value,model=$("mcModel").value,lossBasis=$("lossBasis").value,seed=+$("mcSeed").value||1,blockSize=+$("blockDays").value||21;
+  const series=returns(last.d).filter(Number.isFinite);
+  if(series.length<30){$("monteResult").innerHTML='<div class="status bad">日次データが不足しています。</div>';return}
+  const startValue=last.ds.reinvest,monthly=+$("monthly").value||0,daysPerMonth=21,totalMonths=years*12,totalDays=totalMonths*daysPerMonth,totalContrib=monthly*totalMonths;
+  const threshold=lossBasis==="total"?last.ds.principal+totalContrib:startValue;
+  const m=mean(series),s=sd(series),results=[],yearly=Array.from({length:years},()=>[]);
+  for(let k=0;k<runs;k++){
+    const rng=makeRng(seed+k*104729),blockSampler=model==="block"?createBlockSampler(series,blockSize,rng):null;
+    let value=startValue;
+    for(let d=1;d<=totalDays;d++){
+      let r=model==="bootstrap"?sampleBootstrap(series,rng):model==="block"?blockSampler():m+s*normalFromRng(rng);
+      value*=Math.max(1+r,.001);
+      if(d%daysPerMonth===0)value+=monthly;
+      if(d%252===0){const yi=Math.min(Math.floor(d/252)-1,years-1);yearly[yi].push(value)}
+    }
+    results.push(value)
+  }
+  results.sort((a,b)=>a-b);
+  const p05=quantile(results,.05),p25=quantile(results,.25),median=quantile(results,.5),p75=quantile(results,.75),p95=quantile(results,.95),avg=mean(results);
+  const loss=results.filter(v=>v<threshold).length/runs*100,severe=results.filter(v=>v<threshold*.8).length/runs*100;
+  const label={bootstrap:"実データ・ブートストラップ",block:"実データ・ブロック法",normal:"比較用・正規分布"}[model];
+  $("monteResult").innerHTML=`<div class="cards">
+    <div class="card"><div class="card-title">下位5%</div><div class="card-value">${yen(p05)}</div></div>
+    <div class="card"><div class="card-title">中央値</div><div class="card-value">${yen(median)}</div></div>
+    <div class="card"><div class="card-title">平均値</div><div class="card-value">${yen(avg)}</div></div>
+    <div class="card"><div class="card-title">上位5%</div><div class="card-value">${yen(p95)}</div></div>
+    <div class="card"><div class="card-title">元本割れ確率</div><div class="card-value">${loss.toFixed(1)}%</div><div class="card-sub">判定額 ${yen(threshold)}</div></div>
+    <div class="card"><div class="card-title">20%以上の元本割れ</div><div class="card-value">${severe.toFixed(1)}%</div></div>
+  </div><div class="comment" style="margin-top:12px">モデル：${label}
+試行回数：${runs.toLocaleString()}回
+乱数シード：${seed}
+過去の日次リターン件数：${series.length.toLocaleString()}件
+25〜75%区間：${yen(p25)}〜${yen(p75)}</div>`;
+  const buckets=24,min=results[0],max=results.at(-1),counts=Array(buckets).fill(0);
+  results.forEach(v=>counts[Math.min(buckets-1,Math.floor((v-min)/(max-min||1)*buckets))]++);
+  lineChart($("monteChart"),[{name:"最終資産の分布",color:"#3b82f6",values:counts}]);
+  const rows=yearly.map((v,i)=>{v.sort((a,b)=>a-b);return v.length?`<tr><td>${i+1}年後</td><td>${yen(quantile(v,.05))}</td><td>${yen(quantile(v,.5))}</td><td>${yen(quantile(v,.95))}</td></tr>`:""}).join("");
+  $("yearlyMonte").innerHTML=`<div class="tablewrap"><table><thead><tr><th>時点</th><th>下位5%</th><th>中央値</th><th>上位5%</th></tr></thead><tbody>${rows}</tbody></table></div><p class="small">元本割れ確率は、選択した判定基準とCSVの過去データに依存する参考値です。</p>`
 }
 function calcFire(){
   const need=+$("monthlyNeed").value||0,wr=(+$("withdrawRate").value||4)/100,dy=(+$("distributionYield").value||10)/100;
