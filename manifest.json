@@ -1,11 +1,11 @@
 {
-  "name": "WCM Analyzer Pro Ver.12",
+  "name": "WCM Analyzer Pro Ver.12 Final",
   "short_name": "WCM Analyzer",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#07101d",
   "theme_color": "#08111f",
-  "description": "本格モンテカルロエンジンをapp.jsへ統合したiPhone向けWCM分析アプリ",
+  "description": "外部参照なしの本格モンテカルロエンジン完全統合版",
   "icons": [
     {
       "src": "./icon-192.svg",
