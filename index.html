@@ -9,7 +9,7 @@
   <meta name="apple-mobile-web-app-title" content="WCM Analyzer">
   <link rel="manifest" href="./manifest.json">
   <link rel="apple-touch-icon" href="./icon-192.svg">
-  <title>WCM Analyzer Pro Ver.6</title>
+  <title>WCM Analyzer Pro Ver.7</title>
 <style>
 :root{
   --bg:#07101d;--panel:#111c2e;--panel2:#17243a;--line:#2d3d57;
@@ -70,14 +70,21 @@ th{background:#17243a;color:#bfdbfe}
 .progress>span{display:block;height:100%;background:linear-gradient(90deg,#2563eb,#22c55e)}
 .small{font-size:12px;color:var(--muted);line-height:1.65}
 @media(max-width:650px){.grid,.cards,.forecasts{grid-template-columns:1fr}.chart,.chart svg{min-height:255px;height:255px}}
+
+.scorebar{height:22px;border-radius:999px;background:#24334c;overflow:hidden;border:1px solid var(--line)}
+.scorebar>span{display:block;height:100%;background:linear-gradient(90deg,#ef4444,#f59e0b,#22c55e);transition:width .4s ease}
+.signal-strong{border-left-color:#22c55e}
+.signal-watch{border-left-color:#f59e0b}
+.signal-risk{border-left-color:#ef4444}
+
 </style>
 </head>
 <body>
 <main class="app">
 <header>
   <h1>WCM Analyzer Pro</h1>
-  <span class="badge">iPhone Edition Ver.6</span>
-  <p class="lead">CSVは端末内だけで処理します。Ver.6では、CSVの日次リターンを直接再抽出する実データ型モンテカルロに対応しました。</p>
+  <span class="badge">iPhone Edition Ver.7</span>
+  <p class="lead">CSVは端末内だけで処理します。Ver.7では、WCM専用スコア、積立判定、分配金予測、暴落ストレステスト、FIRE成功率を追加しました。</p>
 </header>
 
 <section class="panel">
@@ -108,8 +115,10 @@ th{background:#17243a;color:#bfdbfe}
 <section id="resultArea" hidden>
   <div class="tabs">
     <button class="tab active" data-page="dashboard">ダッシュボード</button>
+    <button class="tab" data-page="signals">WCM診断</button>
     <button class="tab" data-page="forecast">将来予測</button>
     <button class="tab" data-page="monte">モンテカルロ</button>
+    <button class="tab" data-page="stress">暴落テスト</button>
     <button class="tab" data-page="fire">FIRE診断</button>
     <button class="tab" data-page="details">詳細</button>
   </div>
@@ -119,6 +128,26 @@ th{background:#17243a;color:#bfdbfe}
     <div class="panel"><h2>3方式比較</h2><div class="tablewrap"><table><thead><tr><th>方式</th><th>元本</th><th>現在価値</th><th>損益</th><th>損益率</th></tr></thead><tbody id="compareBody"></tbody></table></div></div>
     <div class="panel"><h2>資産推移</h2><div id="assetChart" class="chart"></div></div>
     <div class="panel"><h2>分析コメント</h2><div id="comment" class="comment"></div></div>
+  </section>
+
+  <section id="signals" class="page" hidden>
+    <div class="panel">
+      <h2>WCM専用スコア</h2>
+      <div id="scoreCards" class="cards"></div>
+      <div id="scoreGauge" style="margin-top:14px"></div>
+    </div>
+    <div class="panel">
+      <h2>積立判断</h2>
+      <div id="investmentSignal" class="comment"></div>
+    </div>
+    <div class="panel">
+      <h2>現在の位置</h2>
+      <div id="marketPosition" class="cards"></div>
+    </div>
+    <div class="panel">
+      <h2>総合AI分析</h2>
+      <div id="aiAdvisor" class="comment"></div>
+    </div>
   </section>
 
   <section id="forecast" class="page" hidden>
@@ -146,6 +175,24 @@ th{background:#17243a;color:#bfdbfe}
     </div>
   </section>
 
+  <section id="stress" class="page" hidden>
+    <div class="panel">
+      <h2>暴落ストレステスト</h2>
+      <p class="small">現在の再投資型評価額に、想定下落率とその後の回復を適用します。</p>
+      <div id="stressCards" class="cards"></div>
+      <div id="stressChart" class="chart" style="margin-top:14px"></div>
+    </div>
+    <div class="panel">
+      <h2>下落時の積立効果</h2>
+      <div class="grid">
+        <div class="field"><label>暴落後の追加投資額</label><input id="crashAdd" type="number" value="100000" step="10000"></div>
+        <div class="field"><label>回復率（%）</label><input id="recoveryRate" type="number" value="30" step="1"></div>
+      </div>
+      <button id="calcStress" class="primary">ストレステストを再計算</button>
+      <div id="stressComment" class="comment" style="margin-top:14px"></div>
+    </div>
+  </section>
+
   <section id="fire" class="page" hidden>
     <div class="panel">
       <h2>FIRE・分配金生活診断</h2>
@@ -154,7 +201,11 @@ th{background:#17243a;color:#bfdbfe}
         <div class="field"><label>想定年間取崩率（%）</label><input id="withdrawRate" type="number" value="4" step=".1"></div>
         <div class="field"><label>想定年間分配率（%）</label><input id="distributionYield" type="number" value="10" step=".1"></div>
       </div>
-      <button id="calcFire" class="green">必要資産を計算</button>
+      <div class="grid">
+        <div class="field"><label>現在年齢</label><input id="currentAge" type="number" value="35" min="18" max="80"></div>
+        <div class="field"><label>目標年齢</label><input id="targetAge" type="number" value="50" min="20" max="90"></div>
+      </div>
+      <button id="calcFire" class="green">FIRE診断を実行</button>
       <div id="fireResult" style="margin-top:14px"></div>
     </div>
   </section>
@@ -283,6 +334,202 @@ function lineChart(el,series){
   const legend=series.map((s,i)=>`<text x="${p+i*170}" y="20" fill="${s.color}" font-size="13">${s.name}</text>`).join("");
   el.innerHTML=`<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><rect width="100%" height="100%" fill="#f8fafc"/>${legend}<line x1="${p}" y1="${h-p}" x2="${w-p}" y2="${h-p}" stroke="#94a3b8"/><line x1="${p}" y1="${p}" x2="${p}" y2="${h-p}" stroke="#94a3b8"/>${paths}</svg>`
 }
+
+function percentileRank(values,current){
+  const clean=values.filter(Number.isFinite).sort((a,b)=>a-b);
+  if(!clean.length)return 50;
+  let count=0;
+  for(const v of clean)if(v<=current)count++;
+  return count/clean.length*100
+}
+function rollingDrawdowns(rows){
+  let high=-Infinity;
+  return rows.map(r=>{
+    high=Math.max(high,r.nav);
+    return (r.nav/high-1)*100
+  })
+}
+function recentReturn(rows,days){
+  if(rows.length<2)return 0;
+  const end=rows.at(-1).nav;
+  const start=rows[Math.max(0,rows.length-1-days)].nav;
+  return start>0?(end/start-1)*100:0
+}
+function clamp(value,min,max){return Math.min(Math.max(value,min),max)}
+function calculateWcmScore(rows){
+  const c=cagr(rows);
+  const dd=mdd(rows);
+  const v=vol(rows);
+  const sh=sharpe(rows);
+  const month=recentReturn(rows,21);
+  const quarter=recentReturn(rows,63);
+  const drawdowns=rollingDrawdowns(rows);
+  const currentDd=drawdowns.at(-1);
+  const ddRank=percentileRank(drawdowns,currentDd);
+
+  let score=50;
+  score+=clamp(c,-20,20)*1.1;
+  score+=clamp(sh,-2,2)*9;
+  score-=clamp(v-18,-10,25)*.7;
+  score+=clamp(month,-15,15)*.7;
+  score+=clamp(quarter,-25,25)*.35;
+  score+=clamp(-currentDd,0,30)*.55;
+  score=clamp(score,0,100);
+
+  let label="様子見";
+  if(score>=68)label="積立チャンス";
+  if(score<38)label="警戒";
+
+  return {score,label,c,dd,v,sh,month,quarter,currentDd,ddRank}
+}
+function inferDistributionProbabilities(rows){
+  const paid=rows.filter(r=>r.distribution>0).map(r=>r.distribution);
+  if(!paid.length)return [];
+  const recent=paid.slice(-24);
+  const freq={};
+  recent.forEach(v=>freq[v]=(freq[v]||0)+1);
+  const total=recent.length;
+  return Object.entries(freq)
+    .map(([value,count])=>({value:+value,probability:count/total*100,count}))
+    .sort((a,b)=>b.probability-a.probability)
+}
+function estimateSpecialDistributionRisk(rows){
+  const recentNav=rows.at(-1).nav;
+  const allNav=rows.map(r=>r.nav);
+  const rank=percentileRank(allNav,recentNav);
+  const dd=rollingDrawdowns(rows).at(-1);
+  let risk=50;
+  risk+=clamp(50-rank,-40,40)*.7;
+  risk+=clamp(-dd,0,35)*1.1;
+  return clamp(risk,5,95)
+}
+function renderWcmDiagnosis(rows,results){
+  const s=calculateWcmScore(rows);
+  const best=[...results].sort((a,b)=>b.value-a.value)[0];
+  const specialRisk=estimateSpecialDistributionRisk(rows);
+  const distProbs=inferDistributionProbabilities(rows);
+  const topDistribution=distProbs[0]?.value||0;
+
+  $("scoreCards").innerHTML=`
+    <div class="card"><div class="card-title">WCMスコア</div><div class="card-value">${s.score.toFixed(0)}/100</div><div class="card-sub">${s.label}</div></div>
+    <div class="card"><div class="card-title">現在の下落率</div><div class="card-value">${s.currentDd.toFixed(2)}%</div></div>
+    <div class="card"><div class="card-title">1か月騰落率</div><div class="card-value">${pct(s.month)}</div></div>
+    <div class="card"><div class="card-title">特別分配リスク</div><div class="card-value">${specialRisk.toFixed(0)}%</div><div class="card-sub">参考推定</div></div>`;
+
+  $("scoreGauge").innerHTML=`
+    <div class="scorebar"><span style="width:${s.score}%"></span></div>
+    <div class="small" style="margin-top:7px">0＝警戒　50＝中立　100＝積立好機</div>`;
+
+  let signalClass="signal-watch";
+  let signalText="通常積立を継続し、追加投資は急がない局面です。";
+  if(s.label==="積立チャンス"){
+    signalClass="signal-strong";
+    signalText="過去データ上では、下落率と期待リターンのバランスが比較的良い局面です。通常積立の継続に加え、余裕資金での分割追加を検討できる水準です。"
+  }else if(s.label==="警戒"){
+    signalClass="signal-risk";
+    signalText="値動きの不安定さが強く、短期的な下落継続に注意が必要です。追加投資は一括ではなく、複数回に分ける方が安全です。"
+  }
+  $("investmentSignal").className=`comment ${signalClass}`;
+  $("investmentSignal").textContent=`判定：${s.label}
+
+${signalText}
+
+この判定は売買推奨ではなく、読み込んだ過去データを基にした統計評価です。`;
+
+  const allDd=rollingDrawdowns(rows);
+  const ddPercentile=percentileRank(allDd,s.currentDd);
+  const navRank=percentileRank(rows.map(r=>r.nav),rows.at(-1).nav);
+  $("marketPosition").innerHTML=`
+    <div class="card"><div class="card-title">基準価額の過去順位</div><div class="card-value">${navRank.toFixed(1)}%</div><div class="card-sub">高いほど過去レンジ上部</div></div>
+    <div class="card"><div class="card-title">下落率の過去順位</div><div class="card-value">${ddPercentile.toFixed(1)}%</div><div class="card-sub">低いほど深い下落</div></div>
+    <div class="card"><div class="card-title">分配金最有力候補</div><div class="card-value">${topDistribution.toLocaleString()}円</div><div class="card-sub">${distProbs[0]?distProbs[0].probability.toFixed(1):"0.0"}%</div></div>
+    <div class="card"><div class="card-title">今回最良方式</div><div class="card-value">${best.name}</div></div>`;
+
+  const tone=s.score>=68?"強気寄り":s.score<38?"慎重":"中立";
+  $("aiAdvisor").textContent=`総合判定は「${tone}」です。
+
+WCMスコアは${s.score.toFixed(0)}点です。1か月騰落率は${s.month.toFixed(2)}%、3か月騰落率は${s.quarter.toFixed(2)}%、現在の最高値からの下落率は${s.currentDd.toFixed(2)}%です。
+
+過去の分配実績からは、次回分配金の最有力候補は${topDistribution.toLocaleString()}円です。ただし、分配金は運用会社の判断で変更されるため、確定予測ではありません。
+
+特別分配リスクは約${specialRisk.toFixed(0)}%と推定しました。ただし、実際の普通分配・特別分配は各投資家の個別元本で決まるため、この値は基準価額だけを使った参考値です。`
+}
+function stressScenarios(currentValue){
+  return [
+    {name:"調整局面",drop:-10,recovery:12,color:"#f59e0b"},
+    {name:"2022年級",drop:-25,recovery:25,color:"#ef4444"},
+    {name:"コロナ級",drop:-35,recovery:45,color:"#a855f7"},
+    {name:"大暴落級",drop:-50,recovery:60,color:"#7f1d1d"}
+  ].map(s=>{
+    const bottom=currentValue*(1+s.drop/100);
+    const recovered=bottom*(1+s.recovery/100);
+    return {...s,bottom,recovered}
+  })
+}
+function renderStress(){
+  if(!last.ds)return;
+  const current=last.ds.reinvest;
+  const add=+$("crashAdd").value||0;
+  const recovery=+$("recoveryRate").value||0;
+  const scenarios=stressScenarios(current);
+
+  $("stressCards").innerHTML=scenarios.map(s=>`
+    <div class="card">
+      <div class="card-title">${s.name}（${s.drop}%）</div>
+      <div class="card-value">${yen(s.bottom)}</div>
+      <div class="card-sub">想定回復後 ${yen(s.recovered)}</div>
+    </div>`).join("");
+
+  lineChart($("stressChart"),scenarios.map(s=>({
+    name:s.name,color:s.color,values:[current,s.bottom,s.recovered]
+  })));
+
+  const crash=-25;
+  const bottom=current*(1+crash/100);
+  const unitsBoost=add>0?add/bottom:0;
+  const noAddRecovered=bottom*(1+recovery/100);
+  const addRecovered=(bottom+add)*(1+recovery/100);
+  const advantage=addRecovered-noAddRecovered-add;
+
+  $("stressComment").textContent=`想定下落率：${crash}%
+暴落直後の評価額：${yen(bottom)}
+追加投資額：${yen(add)}
+その後${recovery}%回復した場合：${yen(addRecovered)}
+
+追加投資による回復後の上乗せ効果は、単純計算で約${yen(Math.max(advantage,0))}です。実際には基準価額、約定日、分配金、税金で変わります。`
+}
+function fireMonteCarlo(){
+  if(!last.d)return null;
+  const currentAge=+$("currentAge").value||35;
+  const targetAge=+$("targetAge").value||50;
+  const years=Math.max(targetAge-currentAge,1);
+  const months=years*12;
+  const runs=1000;
+  const monthly=+$("monthly").value||0;
+  const need=+$("monthlyNeed").value||0;
+  const wr=(+$("withdrawRate").value||4)/100;
+  const target=need*12/wr;
+  const series=returns(last.d).filter(Number.isFinite);
+  const outcomes=[];
+  for(let k=0;k<runs;k++){
+    const rng=makeRng(700000+k*7919);
+    let value=last.ds.reinvest;
+    for(let m=0;m<months;m++){
+      for(let d=0;d<21;d++)value*=Math.max(1+sampleBootstrap(series,rng),.001);
+      value+=monthly
+    }
+    outcomes.push(value)
+  }
+  outcomes.sort((a,b)=>a-b);
+  return {
+    target,years,
+    probability:outcomes.filter(v=>v>=target).length/runs*100,
+    median:quantile(outcomes,.5),
+    low:quantile(outcomes,.05),
+    high:quantile(outcomes,.95)
+  }
+}
+
 function analyze(){
   try{
     const s=new Date($("startDate").value+"T00:00:00"),start=Math.max(s,distData[0].date,growthData[0].date),end=Math.min(distData.at(-1).date,growthData.at(-1).date);
@@ -293,6 +540,8 @@ function analyze(){
     const ds=simDist(d,initial,monthly,day,tax),gs=simGrowth(g,initial,monthly,day);
     const rs=[result("分配金受取",ds.principal,ds.total),result("分配金再投資",ds.principal,ds.reinvest),result("資産成長型",gs.principal,gs.value)];
     last={d,g,ds,gs,rs};
+    renderWcmDiagnosis(d,rs);
+
     const best=[...rs].sort((a,b)=>b.value-a.value)[0];
     $("cards").innerHTML=`<div class="card"><div class="card-title">投資元本</div><div class="card-value">${yen(ds.principal)}</div></div><div class="card"><div class="card-title">最も高い方式</div><div class="card-value">${best.name}</div><div class="card-sub">${yen(best.value)}</div></div><div class="card"><div class="card-title">受取分配金</div><div class="card-value">${yen(ds.cash)}</div></div><div class="card"><div class="card-title">推定税額</div><div class="card-value">${yen(ds.tax)}</div></div>`;
     $("compareBody").innerHTML=rs.map(x=>`<tr><td>${x.name}</td><td>${yen(x.principal)}</td><td>${yen(x.value)}</td><td class="${x.profit>=0?"positive":"negative"}">${yen(x.profit)}</td><td>${pct(x.rate)}</td></tr>`).join("");
@@ -304,6 +553,7 @@ function analyze(){
     $("comment").textContent=`現在の統計判定は、1か月上昇確率${forecast(d,21).up.toFixed(1)}%です。\n\n比較期間では予想分配型CAGRが${cagr(d).toFixed(2)}%、資産成長型が${cagr(g).toFixed(2)}%でした。今回の条件では「${best.name}」が最も高い結果です。\n\n予想分配型の最大下落率は${mdd(d).toFixed(2)}%です。下落時にも積立を継続できる資金計画か確認してください。予測は過去データの延長であり、為替・金利・組入銘柄の業績を直接予測していません。`;
     const gh=new Map(gs.history.map(x=>[x.dateText,x]));const merged=ds.history.filter(x=>gh.has(x.dateText)).map(x=>({...x,growth:gh.get(x.dateText).value}));
     last.merged=merged;
+    renderStress();
     lineChart($("assetChart"),[{name:"元本",color:"#64748b",values:merged.map(x=>x.principal)},{name:"受取",color:"#f59e0b",values:merged.map(x=>x.total)},{name:"再投資",color:"#3b82f6",values:merged.map(x=>x.reinvest)},{name:"成長型",color:"#22c55e",values:merged.map(x=>x.growth)}]);
     lineChart($("navChart"),[{name:"予想分配型",color:"#a855f7",values:d.map(x=>x.nav/d[0].nav*100)},{name:"資産成長型",color:"#22c55e",values:g.map(x=>x.nav/g[0].nav*100)}]);
     $("resultArea").hidden=false;$("mainStatus").className="status ok";$("mainStatus").textContent="分析完了";localStorage.setItem("wcm5",JSON.stringify({start:$("startDate").value,initial,monthly,day,taxMode:$("taxMode").value,taxRate:$("taxRate").value}));
@@ -352,9 +602,28 @@ function runMonte(){
   $("yearlyMonte").innerHTML=`<div class="tablewrap"><table><thead><tr><th>時点</th><th>下位5%</th><th>中央値</th><th>上位5%</th></tr></thead><tbody>${rows}</tbody></table></div><p class="small">元本割れ確率は、選択した判定基準とCSVの過去データに依存する参考値です。</p>`
 }
 function calcFire(){
-  const need=+$("monthlyNeed").value||0,wr=(+$("withdrawRate").value||4)/100,dy=(+$("distributionYield").value||10)/100;
-  const annual=need*12,fire=annual/wr,dist=annual/dy,current=last.ds?.reinvest||0;
-  $("fireResult").innerHTML=`<div class="cards"><div class="card"><div class="card-title">4%ルール必要資産</div><div class="card-value">${yen(fire)}</div><div class="card-sub">現在との差 ${yen(Math.max(fire-current,0))}</div></div><div class="card"><div class="card-title">分配金生活必要資産</div><div class="card-value">${yen(dist)}</div><div class="card-sub">現在との差 ${yen(Math.max(dist-current,0))}</div></div></div>`
+  const need=+$("monthlyNeed").value||0;
+  const wr=(+$("withdrawRate").value||4)/100;
+  const dy=(+$("distributionYield").value||10)/100;
+  const annual=need*12;
+  const fire=annual/wr;
+  const dist=annual/dy;
+  const current=last.ds?.reinvest||0;
+  const sim=fireMonteCarlo();
+
+  $("fireResult").innerHTML=`
+    <div class="cards">
+      <div class="card"><div class="card-title">取崩型必要資産</div><div class="card-value">${yen(fire)}</div><div class="card-sub">現在との差 ${yen(Math.max(fire-current,0))}</div></div>
+      <div class="card"><div class="card-title">分配金生活必要資産</div><div class="card-value">${yen(dist)}</div><div class="card-sub">現在との差 ${yen(Math.max(dist-current,0))}</div></div>
+      <div class="card"><div class="card-title">目標年齢での達成確率</div><div class="card-value">${sim?sim.probability.toFixed(1):"0.0"}%</div><div class="card-sub">${sim?sim.years:0}年後</div></div>
+      <div class="card"><div class="card-title">目標時点の中央値</div><div class="card-value">${sim?yen(sim.median):yen(0)}</div></div>
+    </div>
+    ${sim?`<div class="comment" style="margin-top:12px">目標資産：${yen(sim.target)}
+下位5%：${yen(sim.low)}
+中央値：${yen(sim.median)}
+上位5%：${yen(sim.high)}
+
+達成確率は過去の日次リターンを再抽出した1,000回の参考シミュレーションです。</div>`:""}`
 }
 function download(){
   if(!last.merged)return;
@@ -362,7 +631,7 @@ function download(){
   const csv="\uFEFF"+rows.map(r=>r.map(v=>`"${String(v).replaceAll('"','""')}"`).join(",")).join("\n"),blob=new Blob([csv],{type:"text/csv"}),url=URL.createObjectURL(blob),a=document.createElement("a");a.href=url;a.download=`WCM_Ver5_${new Date().toISOString().slice(0,10)}.csv`;a.click();URL.revokeObjectURL(url)
 }
 document.querySelectorAll(".tab").forEach(b=>b.onclick=()=>{document.querySelectorAll(".tab").forEach(x=>x.classList.remove("active"));document.querySelectorAll(".page").forEach(x=>x.hidden=true);b.classList.add("active");$(b.dataset.page).hidden=false});
-$("distFile").onchange=e=>load(e.target,"dist");$("growthFile").onchange=e=>load(e.target,"growth");$("analyze").onclick=analyze;$("runMonte").onclick=runMonte;$("calcFire").onclick=calcFire;$("download").onclick=download;
+$("distFile").onchange=e=>load(e.target,"dist");$("growthFile").onchange=e=>load(e.target,"growth");$("analyze").onclick=analyze;$("runMonte").onclick=runMonte;$("calcFire").onclick=calcFire;$("calcStress").onclick=renderStress;$("download").onclick=download;
 $("taxMode").onchange=e=>$("taxRate").disabled=e.target.value==="before";
 try{const s=JSON.parse(localStorage.getItem("wcm5")||"{}");if(s.start)$("startDate").value=s.start;if(s.initial!=null)$("initial").value=s.initial;if(s.monthly!=null)$("monthly").value=s.monthly;if(s.day)$("day").value=s.day;if(s.taxMode)$("taxMode").value=s.taxMode;if(s.taxRate)$("taxRate").value=s.taxRate}catch(_){}
 if("serviceWorker"in navigator)navigator.serviceWorker.register("./sw.js").catch(()=>{});
