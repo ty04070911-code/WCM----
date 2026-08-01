@@ -12,15 +12,15 @@
   <meta name="apple-mobile-web-app-title" content="WCM Analyzer">
   <link rel="manifest" href="./manifest.json">
   <link rel="apple-touch-icon" href="./icon-192.svg">
-  <title>WCM Analyzer Pro Ver.8</title>
+  <title>WCM Analyzer Pro Ver.9</title>
 <link rel="stylesheet" href="./style.css?v=8">
 </head>
 <body>
 <main class="app">
 <header>
   <h1>WCM Analyzer Pro</h1>
-  <span class="badge">iPhone Edition Ver.8</span>
-  <p class="lead">CSVは端末内だけで処理します。Ver.8では、画面・デザイン・分析ロジックを分離し、市場環境と下落理由の分析を追加しました。</p>
+  <span class="badge">iPhone Edition Ver.9</span>
+  <p class="lead">CSVは端末内だけで処理します。Ver.9では、来週・来月予測、暴落警戒度、投資行動の参考判定、分析履歴を追加しました。</p>
 </header>
 
 <section class="panel">
@@ -53,10 +53,12 @@
     <button class="tab active" data-page="dashboard">ダッシュボード</button>
     <button class="tab" data-page="signals">WCM診断</button>
     <button class="tab" data-page="market">市場環境</button>
+    <button class="tab" data-page="outlook">今後の見通し</button>
     <button class="tab" data-page="forecast">将来予測</button>
     <button class="tab" data-page="monte">モンテカルロ</button>
     <button class="tab" data-page="stress">暴落テスト</button>
     <button class="tab" data-page="fire">FIRE診断</button>
+    <button class="tab" data-page="history">分析履歴</button>
     <button class="tab" data-page="details">詳細</button>
   </div>
 
@@ -108,6 +110,45 @@
     <div class="panel">
       <h2>外部環境スコア</h2>
       <div id="marketScoreCards" class="cards"></div>
+    </div>
+  </section>
+
+  <section id="outlook" class="page" hidden>
+    <div class="panel">
+      <h2>来週・来月の見通し</h2>
+      <div id="outlookCards" class="cards"></div>
+      <div id="outlookReason" class="comment" style="margin-top:14px"></div>
+    </div>
+
+    <div class="panel">
+      <h2>投資行動の参考判定</h2>
+      <div id="actionSignal" class="comment"></div>
+      <div id="actionScore" style="margin-top:14px"></div>
+    </div>
+
+    <div class="panel">
+      <h2>暴落警戒度</h2>
+      <div id="crashRiskCards" class="cards"></div>
+      <div id="crashRiskComment" class="comment" style="margin-top:14px"></div>
+    </div>
+
+    <div class="panel">
+      <h2>外部環境を加味したシナリオ</h2>
+      <div class="grid">
+        <div class="field">
+          <label>市場データの反映度（%）</label>
+          <input id="marketWeight" type="number" min="0" max="100" value="40" step="5">
+        </div>
+        <div class="field">
+          <label>予測の慎重度</label>
+          <select id="forecastCaution">
+            <option value="normal" selected>標準</option>
+            <option value="cautious">慎重</option>
+            <option value="optimistic">強気</option>
+          </select>
+        </div>
+      </div>
+      <button id="recalcOutlook" class="primary">見通しを再計算</button>
     </div>
   </section>
 
@@ -168,6 +209,18 @@
       </div>
       <button id="calcFire" class="green">FIRE診断を実行</button>
       <div id="fireResult" style="margin-top:14px"></div>
+    </div>
+  </section>
+
+  <section id="history" class="page" hidden>
+    <div class="panel">
+      <h2>分析履歴</h2>
+      <p class="small">最新20件まで端末内に保存します。CSVそのものは保存しません。</p>
+      <div id="historyList"></div>
+      <div class="grid" style="margin-top:14px">
+        <button id="saveSnapshot" class="green">現在の分析を保存</button>
+        <button id="clearHistory" class="gray">履歴を消去</button>
+      </div>
     </div>
   </section>
 

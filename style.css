@@ -78,3 +78,41 @@ th{background:#17243a;color:#bfdbfe}
   font-size:12px;
   font-weight:800;
 }
+
+
+.outlook-up{border-left-color:#22c55e}
+.outlook-flat{border-left-color:#f59e0b}
+.outlook-down{border-left-color:#ef4444}
+.risk-low{border-left-color:#22c55e}
+.risk-mid{border-left-color:#f59e0b}
+.risk-high{border-left-color:#ef4444}
+.history-item{
+  background:#17243a;
+  border:1px solid var(--line);
+  border-radius:14px;
+  padding:13px;
+  margin-bottom:10px;
+}
+.history-head{
+  display:flex;
+  justify-content:space-between;
+  gap:10px;
+  color:#dbeafe;
+  font-weight:800;
+}
+.history-meta{
+  color:var(--muted);
+  font-size:12px;
+  line-height:1.6;
+  margin-top:7px;
+}
+.signal-pill{
+  display:inline-block;
+  padding:5px 9px;
+  border-radius:999px;
+  font-size:12px;
+  font-weight:900;
+}
+.signal-buy{background:#14532d;color:#bbf7d0}
+.signal-hold{background:#78350f;color:#fde68a}
+.signal-take{background:#7f1d1d;color:#fecaca}
