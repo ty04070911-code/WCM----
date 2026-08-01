@@ -1,5 +1,5 @@
 "use strict";
-const APP_VERSION="11.1";
+const APP_VERSION="12.0";
 let distData=null,growthData=null,last={};
 const $=id=>document.getElementById(id);
 const yen=v=>new Intl.NumberFormat("ja-JP",{style:"currency",currency:"JPY",maximumFractionDigits:0}).format(Number(v||0));
@@ -127,8 +127,6 @@ function simGrowth(rows,initial,monthly,day){
 function makeRng(seed){let state=(Number(seed)||1)>>>0;return function(){state=(1664525*state+1013904223)>>>0;return state/4294967296}}
 function normalFromRng(rng){let u=0,v=0;while(!u)u=rng();while(!v)v=rng();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v)}
 function quantile(sorted,p){if(!sorted.length)return 0;const index=(sorted.length-1)*p,lo=Math.floor(index),hi=Math.ceil(index);return lo===hi?sorted[lo]:sorted[lo]+(sorted[hi]-sorted[lo])*(index-lo)}
-function sampleBootstrap(series,rng){return series[Math.floor(rng()*series.length)]}
-function createBlockSampler(series,blockSize,rng){let block=[],position=0;return function(){if(position>=block.length){const maxStart=Math.max(series.length-blockSize,0),start=Math.floor(rng()*(maxStart+1));block=series.slice(start,start+blockSize);if(!block.length)block=[0];position=0}return block[position++]}}
 function forecast(rows,days){
   const r=returns(rows).slice(-120),m=mean(r),s=sd(r),latest=rows.at(-1).nav;
   const center=latest*Math.exp(m*days),range=1.645*s*Math.sqrt(days);
@@ -356,6 +354,7 @@ function analyze(){
     const rs=[result("分配金受取",ds.principal,ds.total),result("分配金再投資",ds.principal,ds.reinvest),result("資産成長型",gs.principal,gs.value)];
     last={d,g,ds,gs,rs};
     renderWcmDiagnosis(d,rs);
+    renderMonteDiagnostics();
     renderOutlook();
     buildMorningBrief();
 
@@ -388,144 +387,122 @@ function analyze(){
     $("resultArea").scrollIntoView({behavior:"smooth"})
   }catch(e){$("mainStatus").className="status bad";$("mainStatus").textContent=`分析エラー：${e.message}`}
 }
-function simulateMonteModel({
-  model,
-  blockSize=20,
-  years,
-  runs,
-  seed,
-  lossBasis
-}){
-  const series=returns(last.d).filter(Number.isFinite);
-  if(series.length<30)throw new Error("日次データが不足しています。");
-
-  const startValue=last.ds.reinvest;
-  const monthly=+$("monthly").value||0;
-  const daysPerMonth=21;
-  const totalMonths=years*12;
-  const totalDays=totalMonths*daysPerMonth;
-  const totalContrib=monthly*totalMonths;
-  const threshold=lossBasis==="total"
-    ?last.ds.principal+totalContrib
-    :startValue;
-
-  const averageReturn=mean(series);
-  const volatility=sd(series);
-  const results=[];
-  const yearly=Array.from({length:years},()=>[]);
-
-  for(let simulationIndex=0;simulationIndex<runs;simulationIndex++){
-    const rng=makeRng(seed+simulationIndex*104729);
-    const blockSampler=model==="block"
-      ?createBlockSampler(series,blockSize,rng)
-      :null;
-
-    let value=startValue;
-
-    for(let dayIndex=1;dayIndex<=totalDays;dayIndex++){
-      let dailyReturn;
-
-      if(model==="bootstrap"){
-        dailyReturn=sampleBootstrap(series,rng)
-      }else if(model==="block"){
-        dailyReturn=blockSampler()
-      }else{
-        dailyReturn=averageReturn+volatility*normalFromRng(rng)
-      }
-
-      value*=Math.max(1+dailyReturn,.001);
-
-      if(dayIndex%daysPerMonth===0)value+=monthly;
-
-      if(dayIndex%252===0){
-        const yearIndex=Math.min(Math.floor(dayIndex/252)-1,years-1);
-        yearly[yearIndex].push(value)
-      }
-    }
-
-    results.push(value)
-  }
-
-  results.sort((a,b)=>a-b);
-
-  const p05=quantile(results,.05);
-  const p25=quantile(results,.25);
-  const median=quantile(results,.5);
-  const p75=quantile(results,.75);
-  const p95=quantile(results,.95);
-  const average=mean(results);
-  const lossProbability=results.filter(value=>value<threshold).length/runs*100;
-  const severeLossProbability=results.filter(value=>value<threshold*.8).length/runs*100;
-  const expectedReturn=startValue>0?(median/startValue-1)*100:0;
-
+function getMonteSettings(){
   return {
-    model,
-    blockSize,
-    years,
-    runs,
-    seed,
-    threshold,
-    seriesCount:series.length,
-    results,
-    yearly,
-    p05,
-    p25,
-    median,
-    p75,
-    p95,
-    average,
-    lossProbability,
-    severeLossProbability,
-    expectedReturn
+    driftPolicy:$("mcDriftPolicy").value,
+    driftShrinkage:.5,
+    winsorizeTail:+$("mcWinsorize").value||0
   }
 }
 
-function monteModelLabel(model,blockSize){
-  if(model==="bootstrap")return "ブートストラップ";
-  if(model==="block")return `ブロック法 ${blockSize}日`;
-  return "正規分布"
+function getMonteConfig(methodOverride=null){
+  const averageBlock=Math.max(2,+$("mcAverageBlock").value||20);
+  const method=methodOverride||$("mcModel").value;
+
+  return {
+    method,
+    years:+$("mcYears").value,
+    runs:+$("mcRuns").value,
+    seed:+$("mcSeed").value||1,
+    startValue:last.ds.reinvest,
+    currentPrincipal:last.ds.principal,
+    monthlyContribution:+$("monthly").value||0,
+    tradingDaysPerMonth:21,
+    lossBasis:$("lossBasis").value,
+    blockSize:averageBlock,
+    minBlockSize:3,
+    maxBlockSize:Math.min(63,Math.max(5,averageBlock*2)),
+    averageBlockSize:averageBlock,
+    blockWeight:clamp((+$("mcBlockWeight").value||80)/100,0,1),
+    degreesOfFreedom:+$("mcDegreesFreedom").value||5,
+    captureYearly:true
+  }
+}
+
+function runProfessionalMonte(methodOverride=null){
+  if(!last.d)throw new Error("先にCSVを読み込み、分析を開始してください。");
+  if(!window.MonteCarloEngine)throw new Error("モンテカルロエンジンを読み込めませんでした。");
+
+  return MonteCarloEngine.simulate(
+    returns(last.d),
+    getMonteConfig(methodOverride),
+    getMonteSettings()
+  )
+}
+
+function renderMonteDiagnostics(){
+  if(!last.d||!window.MonteCarloEngine)return;
+
+  try{
+    const diagnostics=MonteCarloEngine.diagnose(
+      returns(last.d),
+      getMonteSettings()
+    );
+
+    $("mcAverageBlock").value=diagnostics.suggestedBlockLength;
+
+    const warningText=diagnostics.warnings.length
+      ?`\n\n注意\n・${diagnostics.warnings.join("\n・")}`
+      :"";
+
+    $("mcDiagnostics").textContent=`モデル診断
+
+日次データ：${diagnostics.count.toLocaleString()}件
+年率換算リターン：${diagnostics.annualizedReturn.toFixed(2)}%
+年率ボラティリティ：${diagnostics.annualizedVol.toFixed(2)}%
+歪度：${diagnostics.skewness.toFixed(2)}
+超過尖度：${diagnostics.excessKurtosis.toFixed(2)}
+自己相関（1日）：${diagnostics.lag1Autocorrelation.toFixed(3)}
+自己相関（5日）：${diagnostics.lag5Autocorrelation.toFixed(3)}
+推奨平均ブロック長：${diagnostics.suggestedBlockLength}日${warningText}`;
+  }catch(error){
+    $("mcDiagnostics").textContent=`診断エラー：${error.message}`
+  }
 }
 
 function renderSingleMonte(result){
-  const label=monteModelLabel(result.model,result.blockSize);
+  const summary=result.summary;
+  const label=MonteCarloEngine.methodLabel(result.config);
 
   $("monteResult").innerHTML=`<div class="cards">
-    <div class="card"><div class="card-title">下位5%</div><div class="card-value">${yen(result.p05)}</div></div>
-    <div class="card"><div class="card-title">中央値</div><div class="card-value">${yen(result.median)}</div></div>
-    <div class="card"><div class="card-title">平均値</div><div class="card-value">${yen(result.average)}</div></div>
-    <div class="card"><div class="card-title">上位5%</div><div class="card-value">${yen(result.p95)}</div></div>
-    <div class="card"><div class="card-title">元本割れ確率</div><div class="card-value">${result.lossProbability.toFixed(1)}%</div><div class="card-sub">判定額 ${yen(result.threshold)}</div></div>
-    <div class="card"><div class="card-title">20%以上の元本割れ</div><div class="card-value">${result.severeLossProbability.toFixed(1)}%</div></div>
+    <div class="card"><div class="card-title">下位1%</div><div class="card-value">${yen(summary.p01)}</div></div>
+    <div class="card"><div class="card-title">下位5%</div><div class="card-value">${yen(summary.p05)}</div></div>
+    <div class="card"><div class="card-title">中央値</div><div class="card-value">${yen(summary.median)}</div></div>
+    <div class="card"><div class="card-title">上位5%</div><div class="card-value">${yen(summary.p95)}</div></div>
+    <div class="card"><div class="card-title">元本割れ確率</div><div class="card-value">${summary.lossProbability.toFixed(1)}%</div><div class="card-sub">判定額 ${yen(result.threshold)}</div></div>
+    <div class="card"><div class="card-title">中央値最大DD</div><div class="card-value">${summary.medianMaxDrawdown.toFixed(1)}%</div></div>
   </div>
   <div class="comment" style="margin-top:12px">モデル：${label}
-試行回数：${result.runs.toLocaleString()}回
-乱数シード：${result.seed}
-過去の日次リターン件数：${result.seriesCount.toLocaleString()}件
-25〜75%区間：${yen(result.p25)}〜${yen(result.p75)}</div>`;
+エンジン：${result.engineVersion}
+試行回数：${result.config.runs.toLocaleString()}回
+ドリフト：${$("mcDriftPolicy").selectedOptions[0].textContent}
+極端値調整：${$("mcWinsorize").selectedOptions[0].textContent}
+25〜75%区間：${yen(summary.p25)}〜${yen(summary.p75)}
+厳しい最大DD（下位5%）：${summary.severeMaxDrawdown.toFixed(1)}%</div>`;
 
-  const buckets=24;
-  const minimum=result.results[0];
-  const maximum=result.results.at(-1);
+  const buckets=28;
+  const min=result.outcomes[0];
+  const max=result.outcomes.at(-1);
   const counts=Array(buckets).fill(0);
 
-  result.results.forEach(value=>{
-    const index=Math.min(
+  result.outcomes.forEach(value=>{
+    const bucket=Math.min(
       buckets-1,
-      Math.floor((value-minimum)/(maximum-minimum||1)*buckets)
+      Math.floor((value-min)/(max-min||1)*buckets)
     );
-    counts[index]+=1
+    counts[bucket]+=1;
   });
 
   lineChart(
     $("monteChart"),
-    [{name:"最終資産の分布",color:"#3b82f6",values:counts}]
+    [{name:"最終資産分布",color:"#3b82f6",values:counts}]
   );
 
   const yearlyRows=result.yearly.map((values,index)=>{
     values.sort((a,b)=>a-b);
     return values.length
       ?`<tr><td>${index+1}年後</td><td>${yen(quantile(values,.05))}</td><td>${yen(quantile(values,.5))}</td><td>${yen(quantile(values,.95))}</td></tr>`
-      :""
+      :"";
   }).join("");
 
   $("yearlyMonte").innerHTML=`
@@ -535,25 +512,15 @@ function renderSingleMonte(result){
         <tbody>${yearlyRows}</tbody>
       </table>
     </div>
-    <p class="small">元本割れ確率は、選択した判定基準とCSVの過去データに依存する参考値です。</p>`
+    <p class="small">過去データの再標本化に基づく参考シミュレーションです。将来を保証しません。</p>`;
 }
 
 function runMonte(){
-  if(!last.d)return;
-
   try{
-    const result=simulateMonteModel({
-      years:+$("mcYears").value,
-      runs:+$("mcRuns").value,
-      model:$("mcModel").value,
-      lossBasis:$("lossBasis").value,
-      seed:+$("mcSeed").value||1,
-      blockSize:+$("blockDays").value||20
-    });
-
-    renderSingleMonte(result)
+    const result=runProfessionalMonte();
+    renderSingleMonte(result);
   }catch(error){
-    $("monteResult").innerHTML=`<div class="status bad">${error.message}</div>`
+    $("monteResult").innerHTML=`<div class="status bad">${error.message}</div>`;
   }
 }
 
@@ -563,38 +530,37 @@ function compareMonteMethods(){
   if(!last.d){
     status.className="status bad";
     status.textContent="先に2つのCSVを読み込み、「分析を開始」を押してください。";
-    return
+    return;
   }
+
   status.className="status";
-  status.textContent="4手法を計算しています…";
+  status.textContent="本格5手法を計算しています…";
 
   setTimeout(()=>{
     try{
-      const common={
-        years:+$("mcYears").value,
-        runs:+$("mcRuns").value,
-        lossBasis:$("lossBasis").value,
-        seed:+$("mcSeed").value||1
-      };
-
       const methods=[
-        {model:"bootstrap",blockSize:1},
-        {model:"block",blockSize:5},
-        {model:"block",blockSize:10},
-        {model:"block",blockSize:20}
+        "iid",
+        "moving-block",
+        "stationary",
+        "random-block",
+        "hybrid"
       ];
 
-      const results=methods.map(method=>
-        simulateMonteModel({...common,...method})
-      );
+      const results=methods.map(method=>runProfessionalMonte(method));
 
-      const safest=[...results].sort(
-        (left,right)=>left.lossProbability-right.lossProbability
+      const cautious=[...results].sort(
+        (a,b)=>a.summary.median-b.summary.median
       )[0];
 
-      const mostCautious=[...results].sort(
-        (left,right)=>left.median-right.median
+      const highestRisk=[...results].sort(
+        (a,b)=>b.summary.lossProbability-a.summary.lossProbability
       )[0];
+
+      const consensusMedian=mean(results.map(r=>r.summary.median));
+      const medianSpread=
+        (Math.max(...results.map(r=>r.summary.median))-
+         Math.min(...results.map(r=>r.summary.median)))/
+        consensusMedian*100;
 
       $("monteCompareTable").innerHTML=`
         <div class="tablewrap">
@@ -606,72 +572,59 @@ function compareMonteMethods(){
                 <th>中央値</th>
                 <th>上位5%</th>
                 <th>元本割れ</th>
-                <th>中央値リターン</th>
+                <th>最大DD中央値</th>
               </tr>
             </thead>
             <tbody>
-              ${results.map(result=>{
-                const isSafest=result===safest;
-                const isCautious=result===mostCautious;
-                const className=isSafest
-                  ?"method-best"
-                  :isCautious
-                    ?"method-cautious"
-                    :"";
-
-                return `<tr>
-                  <td class="${className}">${monteModelLabel(result.model,result.blockSize)}</td>
-                  <td>${yen(result.p05)}</td>
-                  <td>${yen(result.median)}</td>
-                  <td>${yen(result.p95)}</td>
-                  <td>${result.lossProbability.toFixed(1)}%</td>
-                  <td>${pct(result.expectedReturn)}</td>
-                </tr>`
-              }).join("")}
+              ${results.map(result=>`
+                <tr>
+                  <td>${MonteCarloEngine.methodLabel(result.config)}</td>
+                  <td>${yen(result.summary.p05)}</td>
+                  <td>${yen(result.summary.median)}</td>
+                  <td>${yen(result.summary.p95)}</td>
+                  <td>${result.summary.lossProbability.toFixed(1)}%</td>
+                  <td>${result.summary.medianMaxDrawdown.toFixed(1)}%</td>
+                </tr>`).join("")}
             </tbody>
           </table>
         </div>`;
 
-      const bootstrap=results[0];
-      const block20=results[3];
-      const probabilityDifference=
-        block20.lossProbability-bootstrap.lossProbability;
-      const medianDifference=
-        block20.median-bootstrap.median;
-
-      let interpretation;
-
-      if(Math.abs(probabilityDifference)<2){
-        interpretation="両手法の元本割れ確率は近く、結果は比較的安定しています。"
-      }else if(probabilityDifference>0){
-        interpretation="20日ブロック法の方が元本割れ確率を高く見積もっています。連続下落を残すことで、より慎重な結果になっています。"
+      let reliability;
+      if(medianSpread<15){
+        reliability="5手法の中央値が近く、モデル依存性は比較的小さいです。";
+      }else if(medianSpread<35){
+        reliability="手法による差があるため、中央値の平均と保守的手法を併せて確認してください。";
       }else{
-        interpretation="今回のデータでは20日ブロック法の元本割れ確率が低くなりました。過去に連続した回復局面が多く含まれる可能性があります。"
+        reliability="手法による差が非常に大きく、過去データの局面偏りが強い可能性があります。単一の結果を採用しないでください。";
       }
 
-      $("monteCompareComment").textContent=`比較結果
+      $("monteCompareComment").textContent=`本格エンジン比較結果
 
-最も元本割れ確率が低い手法：
-${monteModelLabel(safest.model,safest.blockSize)}（${safest.lossProbability.toFixed(1)}%）
+5手法の中央値平均：
+${yen(consensusMedian)}
 
-中央値が最も保守的な手法：
-${monteModelLabel(mostCautious.model,mostCautious.blockSize)}（${yen(mostCautious.median)}）
+最も保守的な中央値：
+${MonteCarloEngine.methodLabel(cautious.config)}
+${yen(cautious.summary.median)}
 
-ブートストラップと20日ブロック法の差：
-元本割れ確率 ${probabilityDifference>=0?"+":""}${probabilityDifference.toFixed(1)}ポイント
-中央値 ${medianDifference>=0?"+":""}${yen(medianDifference)}
+元本割れ確率が最も高い手法：
+${MonteCarloEngine.methodLabel(highestRisk.config)}
+${highestRisk.summary.lossProbability.toFixed(1)}%
 
-${interpretation}
+手法間の中央値差：
+${medianSpread.toFixed(1)}%
 
-WCMでは相場の上昇・下落が数日から数週間続くことがあるため、通常は10日または20日ブロック法も併せて確認するのがおすすめです。`;
+${reliability}
+
+通常は、定常ブートストラップまたは混合モデルを中心に見て、単日抽出と移動ブロック法を上下の参考範囲として利用するのがおすすめです。`;
 
       status.className="status ok";
-      status.textContent="比較が完了しました。"
+      status.textContent="本格5手法の比較が完了しました。";
     }catch(error){
       status.className="status bad";
-      status.textContent=`比較エラー：${error.message}`
+      status.textContent=`比較エラー：${error.message}`;
     }
-  },50)
+  },50);
 }
 
 function calcFire(){
