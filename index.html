@@ -12,15 +12,15 @@
   <meta name="apple-mobile-web-app-title" content="WCM Analyzer">
   <link rel="manifest" href="./manifest.json">
   <link rel="apple-touch-icon" href="./icon-192.svg">
-  <title>WCM Analyzer Pro Ver.12 Final</title>
+  <title>WCM Analyzer Pro Ver.13</title>
 <link rel="stylesheet" href="./style.css?v=8">
 </head>
 <body>
 <main class="app">
 <header>
   <h1>WCM Analyzer Pro</h1>
-  <span class="badge">iPhone Edition Ver.12 Final</span>
-  <p class="lead">CSVは端末内だけで処理します。Ver.12では、本格モンテカルロエンジンをapp.js内部のローカル関数として完全統合し、外部ファイルやグローバル変数に依存しない構成にしました。</p>
+  <span class="badge">iPhone Edition Ver.13</span>
+  <p class="lead">CSVは端末内だけで処理します。Ver.12では、Ver.13では、過去の各時点から未来を予測するウォークフォワード検証、モデル別の誤差・的中率・信頼度、精度加重予測を追加しました。</p>
 </header>
 
 <section class="panel">
@@ -56,6 +56,7 @@
     <button class="tab" data-page="market">市場環境</button>
     <button class="tab" data-page="outlook">今後の見通し</button>
     <button class="tab" data-page="forecast">将来予測</button>
+    <button class="tab" data-page="validation">精度検証</button>
     <button class="tab" data-page="monte">モンテカルロ</button>
     <button class="tab" data-page="stress">暴落テスト</button>
     <button class="tab" data-page="fire">FIRE診断</button>
@@ -194,6 +195,91 @@
     <div class="panel"><h2>基準価額予測</h2><div id="forecastCards" class="forecasts"></div><p class="small">過去120営業日の平均収益率と変動率を使用した統計モデルです。</p></div>
     <div class="panel"><h2>次回分配金予測</h2><div id="distributionForecast"></div></div>
     <div class="panel"><h2>基準価額比較</h2><div id="navChart" class="chart"></div></div>
+  </section>
+
+  <section id="validation" class="page" hidden>
+    <div class="panel">
+      <h2>予測精度のウォークフォワード検証</h2>
+      <p class="small">
+        各検証時点より後のデータを使わずに予測し、実際の基準価額と比較します。
+        過去全体を一度に学習する検証より、実運用に近い方法です。
+      </p>
+
+      <div class="grid">
+        <div class="field">
+          <label>予測期間</label>
+          <select id="btHorizon">
+            <option value="5">1週間（5営業日）</option>
+            <option value="21" selected>1か月（21営業日）</option>
+            <option value="63">3か月（63営業日）</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>学習期間</label>
+          <select id="btLookback">
+            <option value="60">60営業日</option>
+            <option value="120" selected>120営業日</option>
+            <option value="252">252営業日</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>検証間隔</label>
+          <select id="btStep">
+            <option value="5" selected>5営業日ごと</option>
+            <option value="10">10営業日ごと</option>
+            <option value="21">21営業日ごと</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>予測区間</label>
+          <select id="btInterval">
+            <option value="0.80">80%</option>
+            <option value="0.90" selected>90%</option>
+            <option value="0.95">95%</option>
+          </select>
+        </div>
+      </div>
+
+      <button id="runBacktest" class="primary">精度検証を実行</button>
+      <div id="backtestStatus" class="status" style="margin-top:14px">
+        CSV分析後に「精度検証を実行」を押してください。
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>検証サマリー</h2>
+      <div id="backtestCards" class="cards"></div>
+      <div id="backtestComment" class="comment" style="margin-top:14px">
+        検証結果をここに表示します。
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>モデル別精度</h2>
+      <div id="backtestTable"></div>
+      <div class="risk-help">
+        MAPEは平均的な予測誤差率です。小さいほど良好です。
+        方向的中率は上昇・下落の向きが当たった割合です。
+        区間カバー率は実績が予測範囲内に入った割合です。
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>精度加重の総合予測</h2>
+      <div id="weightedForecastCards" class="cards"></div>
+      <div id="modelWeights" style="margin-top:14px"></div>
+      <div id="weightedForecastComment" class="comment" style="margin-top:14px">
+        バックテスト後、誤差の小さいモデルを重くした総合予測を表示します。
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>予測と実績の推移</h2>
+      <div id="backtestChart" class="chart"></div>
+    </div>
   </section>
 
   <section id="monte" class="page" hidden>

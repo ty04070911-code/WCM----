@@ -165,3 +165,33 @@ textarea{
   font-size:12px;
   line-height:1.7;
 }
+
+
+/* Ver.13 予測精度検証 */
+.accuracy-high{color:#86efac}
+.accuracy-mid{color:#fde68a}
+.accuracy-low{color:#fca5a5}
+.weight-row{
+  display:grid;
+  grid-template-columns:minmax(120px,1fr) 2fr 70px;
+  align-items:center;
+  gap:10px;
+  margin:9px 0;
+  color:#dbeafe;
+  font-size:13px;
+}
+.weight-bar{
+  height:10px;
+  border-radius:999px;
+  overflow:hidden;
+  background:#0b1423;
+  border:1px solid #334155;
+}
+.weight-bar span{
+  display:block;
+  height:100%;
+  background:linear-gradient(90deg,#2563eb,#22c55e);
+}
+.validation-note{
+  border-left:5px solid #a855f7;
+}
