@@ -1,11 +1,11 @@
 {
-  "name": "WCM Analyzer Pro Ver.11",
+  "name": "WCM Analyzer Pro Ver.12",
   "short_name": "WCM Analyzer",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#07101d",
   "theme_color": "#08111f",
-  "description": "複数モンテカルロ手法比較とVaR・CVaR・ソルティノレシオを搭載",
+  "description": "独立した本格モンテカルロエンジン、定常・ランダム長・混合モデルを搭載",
   "icons": [
     {
       "src": "./icon-192.svg",

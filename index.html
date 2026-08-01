@@ -12,15 +12,15 @@
   <meta name="apple-mobile-web-app-title" content="WCM Analyzer">
   <link rel="manifest" href="./manifest.json">
   <link rel="apple-touch-icon" href="./icon-192.svg">
-  <title>WCM Analyzer Pro Ver.11.1</title>
+  <title>WCM Analyzer Pro Ver.12</title>
 <link rel="stylesheet" href="./style.css?v=8">
 </head>
 <body>
 <main class="app">
 <header>
   <h1>WCM Analyzer Pro</h1>
-  <span class="badge">iPhone Edition Ver.11.1</span>
-  <p class="lead">CSVは端末内だけで処理します。Ver.11では、ブートストラップと複数のブロック法の比較、VaR・CVaR・ソルティノレシオを追加しました。</p>
+  <span class="badge">iPhone Edition Ver.12</span>
+  <p class="lead">CSVは端末内だけで処理します。Ver.12では、独立した本格モンテカルロエンジン、対数リターン、ドリフト縮小、定常・ランダム長・混合モデルを追加しました。</p>
 </header>
 
 <section class="panel">
@@ -198,7 +198,8 @@
 
   <section id="monte" class="page" hidden>
     <div class="panel">
-      <h2>実データ型モンテカルロ Ver.11</h2>
+      <h2>本格モンテカルロエンジン Ver.12</h2>
+
       <div class="grid">
         <div class="field">
           <label>予測年数</label>
@@ -206,51 +207,83 @@
             <option>1</option><option selected>5</option><option>10</option><option>20</option>
           </select>
         </div>
+
         <div class="field">
           <label>試行回数</label>
           <select id="mcRuns">
-            <option>500</option><option selected>1000</option><option>3000</option><option>5000</option>
+            <option>500</option><option selected>1000</option><option>3000</option><option>5000</option><option>10000</option>
           </select>
         </div>
+
         <div class="field">
-          <label>単独実行モデル</label>
+          <label>モデル</label>
           <select id="mcModel">
-            <option value="bootstrap" selected>実データ・ブートストラップ</option>
-            <option value="block">実データ・ブロック法</option>
-            <option value="normal">比較用・正規分布</option>
+            <option value="stationary" selected>定常ブートストラップ</option>
+            <option value="random-block">ランダム長ブロック</option>
+            <option value="hybrid">混合モデル</option>
+            <option value="moving-block">移動ブロック法</option>
+            <option value="iid">単日ブートストラップ</option>
+            <option value="student-t">t分布</option>
+            <option value="normal">正規分布</option>
           </select>
         </div>
+
         <div class="field">
           <label>元本割れ判定</label>
           <select id="lossBasis">
-            <option value="total" selected>最終時点の累計投資元本</option>
+            <option value="total" selected>将来の累計投資元本</option>
             <option value="initial">現在評価額</option>
           </select>
         </div>
+
+        <div class="field">
+          <label>ドリフト設定</label>
+          <select id="mcDriftPolicy">
+            <option value="shrink" selected>過去平均を50%へ縮小</option>
+            <option value="historical">過去平均をそのまま使用</option>
+            <option value="zero">ドリフト0</option>
+            <option value="conservative">保守的</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>極端値調整</label>
+          <select id="mcWinsorize">
+            <option value="0">調整なし</option>
+            <option value="0.005" selected>上下0.5%</option>
+            <option value="0.01">上下1%</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>平均ブロック日数</label>
+          <input id="mcAverageBlock" type="number" min="2" max="63" value="20">
+        </div>
+
+        <div class="field">
+          <label>混合モデルのブロック比率（%）</label>
+          <input id="mcBlockWeight" type="number" min="0" max="100" step="5" value="80">
+        </div>
+
         <div class="field">
           <label>乱数シード</label>
           <input id="mcSeed" type="number" value="20260801" step="1">
         </div>
+
         <div class="field">
-          <label>ブロック日数</label>
-          <select id="blockDays">
-            <option value="5">5日</option>
-            <option value="10">10日</option>
-            <option value="20" selected>20日</option>
-            <option value="21">21営業日</option>
-            <option value="63">63営業日</option>
-          </select>
+          <label>t分布の自由度</label>
+          <input id="mcDegreesFreedom" type="number" min="3" max="30" value="5">
         </div>
       </div>
 
       <div class="grid">
         <button id="runMonte" class="primary">選択モデルを実行</button>
-        <button id="compareMonte" class="green">4手法を比較</button>
+        <button id="compareMonte" class="green">本格5手法を比較</button>
       </div>
 
-      <p class="small">
-        ブートストラップは日次リターンを1日ずつ再抽出します。ブロック法は5日・10日・20日の連続した値動きを保ったまま再抽出します。
-      </p>
+      <div id="mcDiagnostics" class="comment" style="margin-top:14px">
+        CSV分析後に、推奨ブロック長とモデル診断を表示します。
+      </div>
 
       <div id="monteResult" style="margin-top:14px"></div>
       <div id="monteChart" class="chart" style="margin-top:14px"></div>
@@ -258,11 +291,11 @@
     </div>
 
     <div class="panel">
-      <h2>モンテカルロ手法比較</h2>
-      <div id="monteCompareStatus" class="status">「4手法を比較」を押してください。</div>
+      <h2>モデル比較</h2>
+      <div id="monteCompareStatus" class="status">「本格5手法を比較」を押してください。</div>
       <div id="monteCompareTable" style="margin-top:14px"></div>
       <div id="monteCompareComment" class="comment" style="margin-top:14px">
-        同じ条件と乱数シードで、ブートストラップ・5日・10日・20日ブロック法を比較します。
+        単日抽出・移動ブロック・定常ブートストラップ・ランダム長・混合モデルを同条件で比較します。
       </div>
     </div>
   </section>
@@ -322,6 +355,7 @@
 </section>
 </main>
 
-<script src="./app.js?v=8" defer></script>
+<script src="./montecarlo-engine.js?v=12" defer></script>
+<script src="./app.js?v=12" defer></script>
 </body>
 </html>
