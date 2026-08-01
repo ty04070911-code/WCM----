@@ -1,5 +1,5 @@
 "use strict";
-const APP_VERSION="13.0";
+const APP_VERSION="14.0";
 
 /* =========================================================
    Ver.12 Integrated Professional Monte Carlo Engine
@@ -841,6 +841,8 @@ function analyze(){
     const ds=simDist(d,initial,monthly,day,tax),gs=simGrowth(g,initial,monthly,day);
     const rs=[result("分配金受取",ds.principal,ds.total),result("分配金再投資",ds.principal,ds.reinvest),result("資産成長型",gs.principal,gs.value)];
     last={d,g,ds,gs,rs};
+    $("regimeStatus").className="status";
+    $("regimeStatus").textContent="分析データを更新しました。「相場局面を分析」を押してください。";
     $("backtestStatus").className="status";
     $("backtestStatus").textContent="分析データを更新しました。「精度検証を実行」を押してください。";
     renderWcmDiagnosis(d,rs);
@@ -2756,6 +2758,469 @@ ${sortedWeights[0].label} ${(sortedWeights[0].weight*100).toFixed(1)}%
   );
 }
 
+
+/* =========================================================
+   Ver.14 Market Regime & Similar Period Analysis
+   ========================================================= */
+
+const MarketRegimeEngine=(()=>{
+  function windowSlice(rows,endIndex,window){
+    const start=Math.max(0,endIndex-window+1);
+    return rows.slice(start,endIndex+1);
+  }
+
+  function featureVector(rows){
+    const navs=rows.map(row=>row.nav);
+    const logs=[];
+    for(let i=1;i<navs.length;i++){
+      if(navs[i-1]>0&&navs[i]>0){
+        logs.push(Math.log(navs[i]/navs[i-1]));
+      }
+    }
+
+    const latest=navs.at(-1);
+    const first=navs[0];
+    const totalReturn=first>0 ? latest/first-1 : 0;
+    const annualizedVol=sd(logs)*Math.sqrt(252);
+    const shortMean=mean(logs.slice(-Math.min(21,logs.length)));
+    const longMean=mean(logs);
+    const momentum=shortMean-longMean;
+    const ddSeries=[];
+    let high=-Infinity;
+    for(const nav of navs){
+      high=Math.max(high,nav);
+      ddSeries.push(high>0?nav/high-1:0);
+    }
+    const currentDrawdown=ddSeries.at(-1)||0;
+    const maxDrawdown=Math.min(...ddSeries,0);
+    const positiveRatio=logs.length
+      ? logs.filter(value=>value>0).length/logs.length
+      : 0;
+    const acceleration=logs.length>=42
+      ? mean(logs.slice(-21))-mean(logs.slice(-42,-21))
+      : 0;
+
+    return {
+      totalReturn,
+      annualizedVol,
+      momentum,
+      currentDrawdown,
+      maxDrawdown,
+      positiveRatio,
+      acceleration,
+      latest
+    };
+  }
+
+  function classify(features){
+    const returnScore=clamp(50+features.totalReturn*220,0,100);
+    const momentumScore=clamp(50+features.momentum*18000,0,100);
+    const drawdownScore=clamp(100+features.currentDrawdown*260,0,100);
+    const breadthScore=clamp(features.positiveRatio*100,0,100);
+    const volatilityPenalty=clamp((features.annualizedVol-.15)*180,0,35);
+
+    const bullScore=clamp(
+      returnScore*.35+
+      momentumScore*.25+
+      drawdownScore*.25+
+      breadthScore*.15-
+      volatilityPenalty,
+      0,
+      100
+    );
+
+    const bearScore=clamp(
+      (100-returnScore)*.35+
+      (100-momentumScore)*.25+
+      (100-drawdownScore)*.25+
+      (100-breadthScore)*.15+
+      volatilityPenalty*.6,
+      0,
+      100
+    );
+
+    const volatileScore=clamp(
+      features.annualizedVol*220+
+      Math.abs(features.maxDrawdown)*110,
+      0,
+      100
+    );
+
+    const neutralScore=clamp(
+      100-Math.abs(bullScore-bearScore)-volatileScore*.25,
+      0,
+      100
+    );
+
+    const scores={
+      bull:bullScore,
+      neutral:neutralScore,
+      bear:bearScore,
+      volatile:volatileScore
+    };
+
+    const ordered=Object.entries(scores).sort((a,b)=>b[1]-a[1]);
+    const [regime,topScore]=ordered[0];
+    const secondScore=ordered[1][1];
+    const confidence=clamp(50+(topScore-secondScore)*1.4,50,98);
+
+    return {
+      regime,
+      confidence,
+      scores,
+      bullScore,
+      bearScore,
+      volatileScore,
+      neutralScore
+    };
+  }
+
+  function distance(a,b){
+    const scales={
+      totalReturn:.20,
+      annualizedVol:.15,
+      momentum:.0015,
+      currentDrawdown:.15,
+      maxDrawdown:.25,
+      positiveRatio:.20,
+      acceleration:.0015
+    };
+
+    const keys=Object.keys(scales);
+    const squared=keys.reduce((sum,key)=>{
+      const normalized=(a[key]-b[key])/scales[key];
+      return sum+normalized*normalized;
+    },0);
+
+    return Math.sqrt(squared/keys.length);
+  }
+
+  function similarityScore(distanceValue){
+    return clamp(100-distanceValue*22,0,100);
+  }
+
+  function futureReturn(rows,originIndex,horizon){
+    const endIndex=originIndex+horizon;
+    if(endIndex>=rows.length)return null;
+    const start=rows[originIndex].nav;
+    const end=rows[endIndex].nav;
+    return start>0?end/start-1:null;
+  }
+
+  function analyze(rows,options={}){
+    const window=Math.max(21,+options.window||63);
+    const horizon=Math.max(5,+options.horizon||21);
+    const count=Math.max(3,+options.count||5);
+
+    if(rows.length<window+horizon+40){
+      throw new Error(`データ不足です。最低でも${window+horizon+40}営業日程度必要です。`);
+    }
+
+    const currentRows=rows.slice(-window);
+    const currentFeatures=featureVector(currentRows);
+    const classification=classify(currentFeatures);
+
+    const candidates=[];
+    const currentStart=rows.length-window;
+    const minimumGap=Math.max(window,horizon);
+
+    for(let endIndex=window-1;endIndex+horizon<rows.length;endIndex++){
+      if(endIndex>currentStart-minimumGap)continue;
+
+      const periodRows=windowSlice(rows,endIndex,window);
+      const features=featureVector(periodRows);
+      const dist=distance(currentFeatures,features);
+      const future=futureReturn(rows,endIndex,horizon);
+      if(future===null)continue;
+
+      candidates.push({
+        endIndex,
+        date:rows[endIndex].date,
+        dateText:rows[endIndex].dateText,
+        features,
+        distance:dist,
+        similarity:similarityScore(dist),
+        futureReturn:future,
+        classification:classify(features)
+      });
+    }
+
+    const similar=candidates
+      .sort((a,b)=>a.distance-b.distance)
+      .slice(0,count);
+
+    const futureReturns=similar.map(item=>item.futureReturn);
+    const positiveProbability=futureReturns.length
+      ? futureReturns.filter(value=>value>0).length/futureReturns.length*100
+      : 0;
+
+    return {
+      window,
+      horizon,
+      count,
+      currentFeatures,
+      classification,
+      similar,
+      summary:{
+        averageFutureReturn:mean(futureReturns),
+        medianFutureReturn:median(futureReturns),
+        minFutureReturn:Math.min(...futureReturns),
+        maxFutureReturn:Math.max(...futureReturns),
+        positiveProbability
+      }
+    };
+  }
+
+  function modelRecommendation(regime){
+    const map={
+      bull:{
+        primary:"移動ブロック法",
+        secondary:"定常ブートストラップ",
+        reason:"上昇トレンドの連続性を残すモデルが局面を再現しやすいためです。"
+      },
+      neutral:{
+        primary:"定常ブートストラップ",
+        secondary:"混合モデル",
+        reason:"トレンドと単日変動の両方をバランスよく扱えるためです。"
+      },
+      bear:{
+        primary:"ランダム長ブロック",
+        secondary:"混合モデル",
+        reason:"下落局面の長さが一定でないため、可変長の連続性を残す方が現実的です。"
+      },
+      volatile:{
+        primary:"t分布",
+        secondary:"混合モデル",
+        reason:"裾の厚い急変動を正規分布より表現しやすいためです。"
+      }
+    };
+    return map[regime]||map.neutral;
+  }
+
+  return Object.freeze({
+    analyze,
+    featureVector,
+    classify,
+    modelRecommendation
+  });
+})();
+
+function regimeLabel(regime){
+  return {
+    bull:"強気相場",
+    neutral:"中立・持ち合い",
+    bear:"弱気相場",
+    volatile:"高ボラティリティ"
+  }[regime]||regime;
+}
+
+function regimeClass(regime){
+  return {
+    bull:"regime-bull",
+    neutral:"regime-neutral",
+    bear:"regime-bear",
+    volatile:"regime-volatile"
+  }[regime]||"";
+}
+
+function runRegimeAnalysis(){
+  const status=$("regimeStatus");
+
+  if(!last.d){
+    status.className="status bad";
+    status.textContent="先にCSVを読み込み、「分析を開始」を押してください。";
+    return;
+  }
+
+  status.className="status";
+  status.textContent="現在局面と過去の類似局面を分析しています…";
+
+  setTimeout(()=>{
+    try{
+      const result=MarketRegimeEngine.analyze(last.d,{
+        window:+$("regimeWindow").value,
+        horizon:+$("similarHorizon").value,
+        count:+$("similarCount").value
+      });
+
+      last.regime=result;
+      renderRegimeAnalysis(result);
+
+      status.className="status ok";
+      status.textContent="相場局面の分析が完了しました。";
+    }catch(error){
+      console.error(error);
+      status.className="status bad";
+      status.textContent=`相場局面分析エラー：${error.message}`;
+    }
+  },40);
+}
+
+function renderRegimeAnalysis(result){
+  const current=result.currentFeatures;
+  const classification=result.classification;
+  const label=regimeLabel(classification.regime);
+  const recommendation=MarketRegimeEngine.modelRecommendation(
+    classification.regime
+  );
+
+  $("regimeCards").innerHTML=`
+    <div class="card">
+      <div class="card-title">現在の局面</div>
+      <div class="card-value ${regimeClass(classification.regime)}">${label}</div>
+      <div class="card-sub">信頼度 ${classification.confidence.toFixed(0)}%</div>
+    </div>
+    <div class="card">
+      <div class="card-title">期間リターン</div>
+      <div class="card-value">${pct(current.totalReturn*100)}</div>
+    </div>
+    <div class="card">
+      <div class="card-title">年率ボラティリティ</div>
+      <div class="card-value">${(current.annualizedVol*100).toFixed(1)}%</div>
+    </div>
+    <div class="card">
+      <div class="card-title">現在ドローダウン</div>
+      <div class="card-value">${(current.currentDrawdown*100).toFixed(1)}%</div>
+    </div>`;
+
+  $("regimeGauge").innerHTML=`
+    <div class="scorebar">
+      <span style="width:${classification.confidence}%"></span>
+    </div>
+    <div class="small" style="margin-top:7px">
+      強気 ${classification.bullScore.toFixed(0)}点・
+      中立 ${classification.neutralScore.toFixed(0)}点・
+      弱気 ${classification.bearScore.toFixed(0)}点・
+      高ボラ ${classification.volatileScore.toFixed(0)}点
+    </div>`;
+
+  const regimeAdvice={
+    bull:"上昇基調ですが、急上昇後は反落もあるため、追加投資は分割が安全です。",
+    neutral:"方向感が弱いため、通常積立を中心にし、強いシグナルが出るまで一括投資は慎重にします。",
+    bear:"下落基調です。元本割れリスクを重視し、生活防衛資金を確保した上で分割投資を検討します。",
+    volatile:"値動きが大きい局面です。予測幅を広めに見て、単一モデルの結果に依存しないことが重要です。"
+  }[classification.regime];
+
+  $("regimeComment").innerHTML=`
+    <span class="regime-pill ${classification.regime}">${label}</span>
+
+判定期間：${result.window}営業日
+上昇日比率：${(current.positiveRatio*100).toFixed(1)}%
+最大ドローダウン：${(current.maxDrawdown*100).toFixed(1)}%
+短期モメンタム：${(current.momentum*100).toFixed(3)}%
+
+${regimeAdvice}`;
+
+  $("regimeModelCards").innerHTML=`
+    <div class="card">
+      <div class="card-title">推奨モデル</div>
+      <div class="card-value">${recommendation.primary}</div>
+    </div>
+    <div class="card">
+      <div class="card-title">補助モデル</div>
+      <div class="card-value">${recommendation.secondary}</div>
+    </div>`;
+
+  $("regimeModelComment").textContent=`${recommendation.reason}
+
+Ver.13の精度検証結果がある場合は、局面推奨だけでなく、バックテストで信頼度が高いモデルも併せて確認してください。`;
+
+  $("similarPeriodsTable").innerHTML=`
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr>
+            <th>順位</th>
+            <th>基準日</th>
+            <th>類似度</th>
+            <th>当時の局面</th>
+            <th>${result.horizon}日後</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${result.similar.map((item,index)=>{
+            const simClass=item.similarity>=75
+              ?"similarity-high"
+              :item.similarity>=55
+                ?"similarity-mid"
+                :"similarity-low";
+
+            return `<tr>
+              <td>${index+1}</td>
+              <td>${item.dateText}</td>
+              <td class="${simClass}">${item.similarity.toFixed(1)}%</td>
+              <td>${regimeLabel(item.classification.regime)}</td>
+              <td>${pct(item.futureReturn*100)}</td>
+            </tr>`;
+          }).join("")}
+        </tbody>
+      </table>
+    </div>`;
+
+  const summary=result.summary;
+
+  $("similarSummaryCards").innerHTML=`
+    <div class="card">
+      <div class="card-title">平均リターン</div>
+      <div class="card-value">${pct(summary.averageFutureReturn*100)}</div>
+    </div>
+    <div class="card">
+      <div class="card-title">中央値</div>
+      <div class="card-value">${pct(summary.medianFutureReturn*100)}</div>
+    </div>
+    <div class="card">
+      <div class="card-title">上昇確率</div>
+      <div class="card-value">${summary.positiveProbability.toFixed(1)}%</div>
+    </div>
+    <div class="card">
+      <div class="card-title">結果範囲</div>
+      <div class="card-value">${pct(summary.minFutureReturn*100)}〜${pct(summary.maxFutureReturn*100)}</div>
+    </div>`;
+
+  let similarityInterpretation;
+  const topSimilarity=result.similar[0]?.similarity||0;
+
+  if(topSimilarity>=80){
+    similarityInterpretation="現在と非常に近い過去局面が見つかりました。";
+  }else if(topSimilarity>=60){
+    similarityInterpretation="ある程度似た局面はありますが、完全一致ではありません。";
+  }else{
+    similarityInterpretation="過去に近い局面が少なく、類似局面分析の不確実性が高めです。";
+  }
+
+  $("similarComment").textContent=`過去の類似局面分析
+
+最も似ている局面：
+${result.similar[0]?.dateText||"該当なし"}
+類似度 ${topSimilarity.toFixed(1)}%
+
+${result.horizon}営業日後の平均：
+${pct(summary.averageFutureReturn*100)}
+
+上昇した割合：
+${summary.positiveProbability.toFixed(1)}%
+
+${similarityInterpretation}
+
+類似局面は将来の再現を保証しません。金融政策、為替、銘柄構成などが異なる可能性があります。`;
+
+  lineChart(
+    $("similarChart"),
+    [
+      {
+        name:"類似度",
+        color:"#a855f7",
+        values:result.similar.map(item=>item.similarity)
+      },
+      {
+        name:"将来リターン（%）",
+        color:"#22c55e",
+        values:result.similar.map(item=>item.futureReturn*100)
+      }
+    ]
+  );
+}
+
 document.querySelectorAll(".tab").forEach(button=>{
   button.onclick=()=>{
     document.querySelectorAll(".tab").forEach(item=>item.classList.remove("active"));
@@ -2764,7 +3229,7 @@ document.querySelectorAll(".tab").forEach(button=>{
     $(button.dataset.page).hidden=false;
   };
 });
-$("distFile").onchange=e=>load(e.target,"dist");$("growthFile").onchange=e=>load(e.target,"growth");$("analyze").onclick=analyze;$("runBacktest").onclick=runForecastValidation;$("runMonte").onclick=runMonte;$("compareMonte").onclick=compareMonteMethods;$("calcFire").onclick=calcFire;$("calcStress").onclick=renderStress;$("analyzeMarket").onclick=()=>{analyzeMarketEnvironment();if(last.d){renderOutlook();buildMorningBrief()}};$("recalcOutlook").onclick=renderOutlook;$("saveSnapshot").onclick=saveSnapshot;$("clearHistory").onclick=clearHistory;$("whatWouldIDo").onclick=buildWhatWouldIDo;$("saveMemo").onclick=saveDailyMemo;$("clearMemo").onclick=clearDailyMemo;$("download").onclick=download;
+$("distFile").onchange=e=>load(e.target,"dist");$("growthFile").onchange=e=>load(e.target,"growth");$("analyze").onclick=analyze;$("runBacktest").onclick=runForecastValidation;$("runRegime").onclick=runRegimeAnalysis;$("runMonte").onclick=runMonte;$("compareMonte").onclick=compareMonteMethods;$("calcFire").onclick=calcFire;$("calcStress").onclick=renderStress;$("analyzeMarket").onclick=()=>{analyzeMarketEnvironment();if(last.d){renderOutlook();buildMorningBrief()}};$("recalcOutlook").onclick=renderOutlook;$("saveSnapshot").onclick=saveSnapshot;$("clearHistory").onclick=clearHistory;$("whatWouldIDo").onclick=buildWhatWouldIDo;$("saveMemo").onclick=saveDailyMemo;$("clearMemo").onclick=clearDailyMemo;$("download").onclick=download;
 $("taxMode").onchange=e=>$("taxRate").disabled=e.target.value==="before";
 try{const s=JSON.parse(localStorage.getItem("wcm5")||"{}");if(s.start)$("startDate").value=s.start;if(s.initial!=null)$("initial").value=s.initial;if(s.monthly!=null)$("monthly").value=s.monthly;if(s.day)$("day").value=s.day;if(s.taxMode)$("taxMode").value=s.taxMode;if(s.taxRate)$("taxRate").value=s.taxRate}catch(_){}
 if("serviceWorker"in navigator)navigator.serviceWorker.register("./sw.js").catch(()=>{});
