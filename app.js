@@ -1,5 +1,5 @@
 "use strict";
-const APP_VERSION="9.0";
+const APP_VERSION="10.0";
 let distData=null,growthData=null,last={};
 const $=id=>document.getElementById(id);
 const yen=v=>new Intl.NumberFormat("ja-JP",{style:"currency",currency:"JPY",maximumFractionDigits:0}).format(Number(v||0));
@@ -322,6 +322,7 @@ function analyze(){
     last={d,g,ds,gs,rs};
     renderWcmDiagnosis(d,rs);
     renderOutlook();
+    buildMorningBrief();
 
     const best=[...rs].sort((a,b)=>b.value-a.value)[0];
     $("cards").innerHTML=`<div class="card"><div class="card-title">投資元本</div><div class="card-value">${yen(ds.principal)}</div></div><div class="card"><div class="card-title">最も高い方式</div><div class="card-value">${best.name}</div><div class="card-sub">${yen(best.value)}</div></div><div class="card"><div class="card-title">受取分配金</div><div class="card-value">${yen(ds.cash)}</div></div><div class="card"><div class="card-title">推定税額</div><div class="card-value">${yen(ds.tax)}</div></div>`;
@@ -765,6 +766,200 @@ function clearHistory(){
   }
 }
 
+
+function getLatestDistributionCandidates(rows){
+  const paid=rows.filter(r=>r.distribution>0).map(r=>r.distribution);
+  if(!paid.length)return [];
+  const recent=paid.slice(-36);
+  const weighted=new Map();
+
+  recent.forEach((value,index)=>{
+    const recencyWeight=.5+(index+1)/recent.length;
+    weighted.set(value,(weighted.get(value)||0)+recencyWeight)
+  });
+
+  const total=[...weighted.values()].reduce((s,v)=>s+v,0);
+  return [...weighted.entries()]
+    .map(([value,weight])=>({
+      value:+value,
+      probability:total?weight/total*100:0
+    }))
+    .sort((a,b)=>b.probability-a.probability)
+    .slice(0,4)
+}
+
+function calculateWcmIndex(rows,market){
+  const internal=calculateWcmScore(rows);
+  const marketScore=calculateMarketScore(market);
+  const crashRisk=calculateCrashRisk(rows,market);
+  const navRank=percentileRank(rows.map(r=>r.nav),rows.at(-1).nav);
+  const currentDd=rollingDrawdowns(rows).at(-1);
+
+  let index=
+    internal.score*.48+
+    marketScore*.22+
+    (100-crashRisk)*.18+
+    (100-navRank)*.07+
+    clamp(-currentDd,0,35)*.14;
+
+  index=clamp(index,0,100);
+
+  let label="中立";
+  let className="index-neutral";
+  if(index>=78){label="かなり魅力的";className="index-excellent"}
+  else if(index>=62){label="やや魅力的";className="index-good"}
+  else if(index<38){label="警戒";className="index-risk"}
+
+  return {
+    index,label,className,
+    internal:internal.score,
+    market:marketScore,
+    crashRisk,
+    navRank,
+    currentDd
+  }
+}
+
+function buildMorningBrief(){
+  if(!last.d)return;
+
+  const market=getSavedMarketInputs();
+  const action=calculateActionSignal(last.d,market);
+  const idx=calculateWcmIndex(last.d,market);
+  const outlook=calculateOutlook(
+    last.d,
+    market,
+    +$("marketWeight").value||40,
+    $("forecastCaution").value
+  );
+  const candidates=getLatestDistributionCandidates(last.d);
+  const top=candidates[0];
+  const latest=last.d.at(-1).nav;
+  const oneMonth=recentReturn(last.d,21);
+
+  const greeting=new Date().getHours()<12
+    ?"おはようございます。"
+    :new Date().getHours()<18
+      ?"こんにちは。"
+      :"こんばんは。";
+
+  $("morningBrief").className="comment ai-hero";
+  $("morningBrief").textContent=`${greeting}
+
+現在の基準価額は${Math.round(latest).toLocaleString()}円です。直近1か月は${oneMonth>=0?"+":""}${oneMonth.toFixed(2)}%、WCM指数は${idx.index.toFixed(0)}点で「${idx.label}」です。
+
+今日の参考判断は「${action.label}」です。来週中心予測は${Math.round(outlook.weekly.center).toLocaleString()}円、来月は${Math.round(outlook.monthly.center).toLocaleString()}円です。
+
+次回分配金の最有力候補は${top?top.value.toLocaleString():"判定不能"}円です。`;
+
+  $("dailyStatusCards").innerHTML=`
+    <div class="card"><div class="card-title">今日の判断</div><div class="card-value">${action.label}</div><div class="card-sub">${action.score.toFixed(0)}/100</div></div>
+    <div class="card"><div class="card-title">WCM指数</div><div class="card-value ${idx.className}">${idx.index.toFixed(0)}</div><div class="card-sub">${idx.label}</div></div>
+    <div class="card"><div class="card-title">来週予測</div><div class="card-value">${Math.round(outlook.weekly.center).toLocaleString()}円</div><div class="card-sub">上昇確率 ${outlook.weekly.up.toFixed(1)}%</div></div>
+    <div class="card"><div class="card-title">暴落警戒度</div><div class="card-value">${action.crashRisk.toFixed(0)}</div><div class="card-sub">100に近いほど警戒</div></div>`;
+
+  renderWcmIndex(idx);
+  renderDistributionAi(candidates,idx,action);
+  $("whatWouldIDo").disabled=false
+}
+
+function renderWcmIndex(idx){
+  $("wcmIndexCards").innerHTML=`
+    <div class="card"><div class="card-title">総合指数</div><div class="card-value ${idx.className}">${idx.index.toFixed(0)}/100</div><div class="card-sub">${idx.label}</div></div>
+    <div class="card"><div class="card-title">内部スコア</div><div class="card-value">${idx.internal.toFixed(0)}</div></div>
+    <div class="card"><div class="card-title">外部環境</div><div class="card-value">${idx.market.toFixed(0)}</div></div>
+    <div class="card"><div class="card-title">価格の過去順位</div><div class="card-value">${idx.navRank.toFixed(1)}%</div></div>`;
+
+  $("wcmIndexGauge").innerHTML=`
+    <div class="scorebar"><span style="width:${idx.index}%"></span></div>
+    <div class="small" style="margin-top:7px">警戒 0 ← WCM指数 → 100 魅力的</div>`
+}
+
+function renderDistributionAi(candidates,idx,action){
+  if(!candidates.length){
+    $("distributionAiCards").innerHTML='<div class="small">分配履歴がありません。</div>';
+    $("distributionAiComment").textContent="予測に必要な分配履歴がありません。";
+    return
+  }
+
+  $("distributionAiCards").innerHTML=candidates.map((c,index)=>`
+    <div class="card">
+      <div class="card-title">${index===0?"最有力候補":"候補 "+(index+1)}</div>
+      <div class="card-value">${c.value.toLocaleString()}円</div>
+      <div class="card-sub">${c.probability.toFixed(1)}%</div>
+    </div>`).join("");
+
+  const specialRisk=estimateSpecialDistributionRisk(last.d);
+  $("distributionAiComment").textContent=`最有力候補は${candidates[0].value.toLocaleString()}円、参考確率は${candidates[0].probability.toFixed(1)}%です。
+
+WCM指数は${idx.index.toFixed(0)}点、行動判定は「${action.label}」です。基準価額が過去レンジの下部にあるほど、個別元本によっては特別分配になりやすくなります。
+
+特別分配リスクの参考推定は${specialRisk.toFixed(0)}%です。実際の普通分配・特別分配は各投資家の個別元本で決まります。`
+}
+
+function buildWhatWouldIDo(){
+  if(!last.d)return;
+
+  const market=getSavedMarketInputs();
+  const action=calculateActionSignal(last.d,market);
+  const idx=calculateWcmIndex(last.d,market);
+  const oneMonth=recentReturn(last.d,21);
+  const currentDd=rollingDrawdowns(last.d).at(-1);
+  const reasons=[];
+
+  if(idx.index>=68)reasons.push(`WCM指数が${idx.index.toFixed(0)}点で、過去データ上の魅力度が比較的高い`);
+  if(idx.index<40)reasons.push(`WCM指数が${idx.index.toFixed(0)}点で、現時点のリスクが高い`);
+  if(currentDd<=-10)reasons.push(`最高値から${Math.abs(currentDd).toFixed(1)}%下落している`);
+  if(oneMonth<=-5)reasons.push(`直近1か月で${Math.abs(oneMonth).toFixed(1)}%下落している`);
+  if(action.crashRisk>=65)reasons.push(`暴落警戒度が${action.crashRisk.toFixed(0)}点と高い`);
+  if(action.crashRisk<40)reasons.push(`暴落警戒度が${action.crashRisk.toFixed(0)}点と比較的低い`);
+  if(!reasons.length)reasons.push("強い買い材料と強い警戒材料が拮抗している");
+
+  let decision="通常積立のみを継続します。";
+  let second="追加投資は見送ります。";
+
+  if(action.code==="buy"){
+    decision="通常積立を継続します。";
+    second="余裕資金がある場合は、追加資金を3〜5回に分けて投入します。"
+  }else if(action.code==="take"){
+    decision="新規の一括投資は控えます。";
+    second="保有比率が大きすぎる場合だけ、一部利益確定や現金比率の調整を検討します。"
+  }
+
+  $("myDecision").innerHTML=`<strong>もし私なら</strong>
+
+${decision}
+${second}
+
+<strong>理由</strong>
+<ul class="decision-list">
+${reasons.map(r=>`<li>${r}</li>`).join("")}
+</ul>
+
+生活防衛資金と事業資金は投資に回さず、判断を1回で決めずに分割します。`
+}
+
+function memoKey(){
+  return `wcm10-memo-${new Date().toISOString().slice(0,10)}`
+}
+
+function saveDailyMemo(){
+  localStorage.setItem(memoKey(),$("dailyMemo").value);
+  $("memoStatus").className="status ok";
+  $("memoStatus").textContent="今日のメモを保存しました。"
+}
+
+function clearDailyMemo(){
+  $("dailyMemo").value="";
+  localStorage.removeItem(memoKey());
+  $("memoStatus").className="status";
+  $("memoStatus").textContent="メモを消去しました。"
+}
+
+function restoreDailyMemo(){
+  $("dailyMemo").value=localStorage.getItem(memoKey())||""
+}
+
 document.querySelectorAll(".tab").forEach(b=>b.onclick=()=>{
 function getMarketInputs(){
   return {
@@ -1119,8 +1314,202 @@ function clearHistory(){
   }
 }
 
+
+function getLatestDistributionCandidates(rows){
+  const paid=rows.filter(r=>r.distribution>0).map(r=>r.distribution);
+  if(!paid.length)return [];
+  const recent=paid.slice(-36);
+  const weighted=new Map();
+
+  recent.forEach((value,index)=>{
+    const recencyWeight=.5+(index+1)/recent.length;
+    weighted.set(value,(weighted.get(value)||0)+recencyWeight)
+  });
+
+  const total=[...weighted.values()].reduce((s,v)=>s+v,0);
+  return [...weighted.entries()]
+    .map(([value,weight])=>({
+      value:+value,
+      probability:total?weight/total*100:0
+    }))
+    .sort((a,b)=>b.probability-a.probability)
+    .slice(0,4)
+}
+
+function calculateWcmIndex(rows,market){
+  const internal=calculateWcmScore(rows);
+  const marketScore=calculateMarketScore(market);
+  const crashRisk=calculateCrashRisk(rows,market);
+  const navRank=percentileRank(rows.map(r=>r.nav),rows.at(-1).nav);
+  const currentDd=rollingDrawdowns(rows).at(-1);
+
+  let index=
+    internal.score*.48+
+    marketScore*.22+
+    (100-crashRisk)*.18+
+    (100-navRank)*.07+
+    clamp(-currentDd,0,35)*.14;
+
+  index=clamp(index,0,100);
+
+  let label="中立";
+  let className="index-neutral";
+  if(index>=78){label="かなり魅力的";className="index-excellent"}
+  else if(index>=62){label="やや魅力的";className="index-good"}
+  else if(index<38){label="警戒";className="index-risk"}
+
+  return {
+    index,label,className,
+    internal:internal.score,
+    market:marketScore,
+    crashRisk,
+    navRank,
+    currentDd
+  }
+}
+
+function buildMorningBrief(){
+  if(!last.d)return;
+
+  const market=getSavedMarketInputs();
+  const action=calculateActionSignal(last.d,market);
+  const idx=calculateWcmIndex(last.d,market);
+  const outlook=calculateOutlook(
+    last.d,
+    market,
+    +$("marketWeight").value||40,
+    $("forecastCaution").value
+  );
+  const candidates=getLatestDistributionCandidates(last.d);
+  const top=candidates[0];
+  const latest=last.d.at(-1).nav;
+  const oneMonth=recentReturn(last.d,21);
+
+  const greeting=new Date().getHours()<12
+    ?"おはようございます。"
+    :new Date().getHours()<18
+      ?"こんにちは。"
+      :"こんばんは。";
+
+  $("morningBrief").className="comment ai-hero";
+  $("morningBrief").textContent=`${greeting}
+
+現在の基準価額は${Math.round(latest).toLocaleString()}円です。直近1か月は${oneMonth>=0?"+":""}${oneMonth.toFixed(2)}%、WCM指数は${idx.index.toFixed(0)}点で「${idx.label}」です。
+
+今日の参考判断は「${action.label}」です。来週中心予測は${Math.round(outlook.weekly.center).toLocaleString()}円、来月は${Math.round(outlook.monthly.center).toLocaleString()}円です。
+
+次回分配金の最有力候補は${top?top.value.toLocaleString():"判定不能"}円です。`;
+
+  $("dailyStatusCards").innerHTML=`
+    <div class="card"><div class="card-title">今日の判断</div><div class="card-value">${action.label}</div><div class="card-sub">${action.score.toFixed(0)}/100</div></div>
+    <div class="card"><div class="card-title">WCM指数</div><div class="card-value ${idx.className}">${idx.index.toFixed(0)}</div><div class="card-sub">${idx.label}</div></div>
+    <div class="card"><div class="card-title">来週予測</div><div class="card-value">${Math.round(outlook.weekly.center).toLocaleString()}円</div><div class="card-sub">上昇確率 ${outlook.weekly.up.toFixed(1)}%</div></div>
+    <div class="card"><div class="card-title">暴落警戒度</div><div class="card-value">${action.crashRisk.toFixed(0)}</div><div class="card-sub">100に近いほど警戒</div></div>`;
+
+  renderWcmIndex(idx);
+  renderDistributionAi(candidates,idx,action);
+  $("whatWouldIDo").disabled=false
+}
+
+function renderWcmIndex(idx){
+  $("wcmIndexCards").innerHTML=`
+    <div class="card"><div class="card-title">総合指数</div><div class="card-value ${idx.className}">${idx.index.toFixed(0)}/100</div><div class="card-sub">${idx.label}</div></div>
+    <div class="card"><div class="card-title">内部スコア</div><div class="card-value">${idx.internal.toFixed(0)}</div></div>
+    <div class="card"><div class="card-title">外部環境</div><div class="card-value">${idx.market.toFixed(0)}</div></div>
+    <div class="card"><div class="card-title">価格の過去順位</div><div class="card-value">${idx.navRank.toFixed(1)}%</div></div>`;
+
+  $("wcmIndexGauge").innerHTML=`
+    <div class="scorebar"><span style="width:${idx.index}%"></span></div>
+    <div class="small" style="margin-top:7px">警戒 0 ← WCM指数 → 100 魅力的</div>`
+}
+
+function renderDistributionAi(candidates,idx,action){
+  if(!candidates.length){
+    $("distributionAiCards").innerHTML='<div class="small">分配履歴がありません。</div>';
+    $("distributionAiComment").textContent="予測に必要な分配履歴がありません。";
+    return
+  }
+
+  $("distributionAiCards").innerHTML=candidates.map((c,index)=>`
+    <div class="card">
+      <div class="card-title">${index===0?"最有力候補":"候補 "+(index+1)}</div>
+      <div class="card-value">${c.value.toLocaleString()}円</div>
+      <div class="card-sub">${c.probability.toFixed(1)}%</div>
+    </div>`).join("");
+
+  const specialRisk=estimateSpecialDistributionRisk(last.d);
+  $("distributionAiComment").textContent=`最有力候補は${candidates[0].value.toLocaleString()}円、参考確率は${candidates[0].probability.toFixed(1)}%です。
+
+WCM指数は${idx.index.toFixed(0)}点、行動判定は「${action.label}」です。基準価額が過去レンジの下部にあるほど、個別元本によっては特別分配になりやすくなります。
+
+特別分配リスクの参考推定は${specialRisk.toFixed(0)}%です。実際の普通分配・特別分配は各投資家の個別元本で決まります。`
+}
+
+function buildWhatWouldIDo(){
+  if(!last.d)return;
+
+  const market=getSavedMarketInputs();
+  const action=calculateActionSignal(last.d,market);
+  const idx=calculateWcmIndex(last.d,market);
+  const oneMonth=recentReturn(last.d,21);
+  const currentDd=rollingDrawdowns(last.d).at(-1);
+  const reasons=[];
+
+  if(idx.index>=68)reasons.push(`WCM指数が${idx.index.toFixed(0)}点で、過去データ上の魅力度が比較的高い`);
+  if(idx.index<40)reasons.push(`WCM指数が${idx.index.toFixed(0)}点で、現時点のリスクが高い`);
+  if(currentDd<=-10)reasons.push(`最高値から${Math.abs(currentDd).toFixed(1)}%下落している`);
+  if(oneMonth<=-5)reasons.push(`直近1か月で${Math.abs(oneMonth).toFixed(1)}%下落している`);
+  if(action.crashRisk>=65)reasons.push(`暴落警戒度が${action.crashRisk.toFixed(0)}点と高い`);
+  if(action.crashRisk<40)reasons.push(`暴落警戒度が${action.crashRisk.toFixed(0)}点と比較的低い`);
+  if(!reasons.length)reasons.push("強い買い材料と強い警戒材料が拮抗している");
+
+  let decision="通常積立のみを継続します。";
+  let second="追加投資は見送ります。";
+
+  if(action.code==="buy"){
+    decision="通常積立を継続します。";
+    second="余裕資金がある場合は、追加資金を3〜5回に分けて投入します。"
+  }else if(action.code==="take"){
+    decision="新規の一括投資は控えます。";
+    second="保有比率が大きすぎる場合だけ、一部利益確定や現金比率の調整を検討します。"
+  }
+
+  $("myDecision").innerHTML=`<strong>もし私なら</strong>
+
+${decision}
+${second}
+
+<strong>理由</strong>
+<ul class="decision-list">
+${reasons.map(r=>`<li>${r}</li>`).join("")}
+</ul>
+
+生活防衛資金と事業資金は投資に回さず、判断を1回で決めずに分割します。`
+}
+
+function memoKey(){
+  return `wcm10-memo-${new Date().toISOString().slice(0,10)}`
+}
+
+function saveDailyMemo(){
+  localStorage.setItem(memoKey(),$("dailyMemo").value);
+  $("memoStatus").className="status ok";
+  $("memoStatus").textContent="今日のメモを保存しました。"
+}
+
+function clearDailyMemo(){
+  $("dailyMemo").value="";
+  localStorage.removeItem(memoKey());
+  $("memoStatus").className="status";
+  $("memoStatus").textContent="メモを消去しました。"
+}
+
+function restoreDailyMemo(){
+  $("dailyMemo").value=localStorage.getItem(memoKey())||""
+}
+
 document.querySelectorAll(".tab").forEach(x=>x.classList.remove("active"));document.querySelectorAll(".page").forEach(x=>x.hidden=true);b.classList.add("active");$(b.dataset.page).hidden=false});
-$("distFile").onchange=e=>load(e.target,"dist");$("growthFile").onchange=e=>load(e.target,"growth");$("analyze").onclick=analyze;$("runMonte").onclick=runMonte;$("calcFire").onclick=calcFire;$("calcStress").onclick=renderStress;$("analyzeMarket").onclick=()=>{analyzeMarketEnvironment();if(last.d)renderOutlook()};$("recalcOutlook").onclick=renderOutlook;$("saveSnapshot").onclick=saveSnapshot;$("clearHistory").onclick=clearHistory;$("download").onclick=download;
+$("distFile").onchange=e=>load(e.target,"dist");$("growthFile").onchange=e=>load(e.target,"growth");$("analyze").onclick=analyze;$("runMonte").onclick=runMonte;$("calcFire").onclick=calcFire;$("calcStress").onclick=renderStress;$("analyzeMarket").onclick=()=>{analyzeMarketEnvironment();if(last.d){renderOutlook();buildMorningBrief()}};$("recalcOutlook").onclick=renderOutlook;$("saveSnapshot").onclick=saveSnapshot;$("clearHistory").onclick=clearHistory;$("whatWouldIDo").onclick=buildWhatWouldIDo;$("saveMemo").onclick=saveDailyMemo;$("clearMemo").onclick=clearDailyMemo;$("download").onclick=download;
 $("taxMode").onchange=e=>$("taxRate").disabled=e.target.value==="before";
 try{const s=JSON.parse(localStorage.getItem("wcm5")||"{}");if(s.start)$("startDate").value=s.start;if(s.initial!=null)$("initial").value=s.initial;if(s.monthly!=null)$("monthly").value=s.monthly;if(s.day)$("day").value=s.day;if(s.taxMode)$("taxMode").value=s.taxMode;if(s.taxRate)$("taxRate").value=s.taxRate}catch(_){}
 if("serviceWorker"in navigator)navigator.serviceWorker.register("./sw.js").catch(()=>{});
@@ -1128,3 +1517,5 @@ restoreMarketInputs();
 
 restoreOutlookSettings();
 renderHistory();
+
+restoreDailyMemo();
