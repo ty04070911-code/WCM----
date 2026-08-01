@@ -12,15 +12,15 @@
   <meta name="apple-mobile-web-app-title" content="WCM Analyzer">
   <link rel="manifest" href="./manifest.json">
   <link rel="apple-touch-icon" href="./icon-192.svg">
-  <title>WCM Analyzer Pro Ver.9</title>
+  <title>WCM Analyzer Pro Ver.10</title>
 <link rel="stylesheet" href="./style.css?v=8">
 </head>
 <body>
 <main class="app">
 <header>
   <h1>WCM Analyzer Pro</h1>
-  <span class="badge">iPhone Edition Ver.9</span>
-  <p class="lead">CSVは端末内だけで処理します。Ver.9では、来週・来月予測、暴落警戒度、投資行動の参考判定、分析履歴を追加しました。</p>
+  <span class="badge">iPhone Edition Ver.10</span>
+  <p class="lead">CSVは端末内だけで処理します。Ver.10では、朝の要約、「もし私なら」判断、WCM指数、分配金AI、日次メモを追加しました。</p>
 </header>
 
 <section class="panel">
@@ -50,7 +50,8 @@
 
 <section id="resultArea" hidden>
   <div class="tabs">
-    <button class="tab active" data-page="dashboard">ダッシュボード</button>
+    <button class="tab active" data-page="assistant">AIアシスタント</button>
+    <button class="tab" data-page="dashboard">ダッシュボード</button>
     <button class="tab" data-page="signals">WCM診断</button>
     <button class="tab" data-page="market">市場環境</button>
     <button class="tab" data-page="outlook">今後の見通し</button>
@@ -61,6 +62,43 @@
     <button class="tab" data-page="history">分析履歴</button>
     <button class="tab" data-page="details">詳細</button>
   </div>
+
+  <section id="assistant" class="page">
+    <div class="panel">
+      <h2>今日のWCMブリーフ</h2>
+      <div id="morningBrief" class="comment">CSVを読み込み、分析を開始してください。</div>
+      <div id="dailyStatusCards" class="cards" style="margin-top:14px"></div>
+    </div>
+
+    <div class="panel">
+      <h2>もし私なら</h2>
+      <button id="whatWouldIDo" class="primary" disabled>判断を表示</button>
+      <div id="myDecision" class="comment" style="margin-top:14px">分析後に利用できます。</div>
+    </div>
+
+    <div class="panel">
+      <h2>WCM指数</h2>
+      <div id="wcmIndexCards" class="cards"></div>
+      <div id="wcmIndexGauge" style="margin-top:14px"></div>
+      <p class="small">価格位置、下落率、成長率、変動率、市場環境を合成した独自の参考指数です。</p>
+    </div>
+
+    <div class="panel">
+      <h2>次回分配金AI</h2>
+      <div id="distributionAiCards" class="cards"></div>
+      <div id="distributionAiComment" class="comment" style="margin-top:14px"></div>
+    </div>
+
+    <div class="panel">
+      <h2>今日のメモ</h2>
+      <textarea id="dailyMemo" rows="5" placeholder="今日の判断や気づきを入力"></textarea>
+      <div class="grid" style="margin-top:12px">
+        <button id="saveMemo" class="green">メモを保存</button>
+        <button id="clearMemo" class="gray">メモを消去</button>
+      </div>
+      <div id="memoStatus" class="status"></div>
+    </div>
+  </section>
 
   <section id="dashboard" class="page">
     <div class="panel"><h2>運用結果</h2><div id="cards" class="cards"></div></div>

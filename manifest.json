@@ -1,11 +1,11 @@
 {
-  "name": "WCM Analyzer Pro Ver.9",
+  "name": "WCM Analyzer Pro Ver.10",
   "short_name": "WCM Analyzer",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#07101d",
   "theme_color": "#08111f",
-  "description": "来週・来月予測、暴落警戒度、投資行動判定、分析履歴を搭載",
+  "description": "毎日使えるAI投資アシスタント、WCM指数、分配金AI、日次メモを搭載",
   "icons": [
     {
       "src": "./icon-192.svg",
