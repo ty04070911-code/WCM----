@@ -12,15 +12,15 @@
   <meta name="apple-mobile-web-app-title" content="WCM Analyzer">
   <link rel="manifest" href="./manifest.json">
   <link rel="apple-touch-icon" href="./icon-192.svg">
-  <title>WCM Analyzer Pro Ver.10</title>
+  <title>WCM Analyzer Pro Ver.11</title>
 <link rel="stylesheet" href="./style.css?v=8">
 </head>
 <body>
 <main class="app">
 <header>
   <h1>WCM Analyzer Pro</h1>
-  <span class="badge">iPhone Edition Ver.10</span>
-  <p class="lead">CSVは端末内だけで処理します。Ver.10では、朝の要約、「もし私なら」判断、WCM指数、分配金AI、日次メモを追加しました。</p>
+  <span class="badge">iPhone Edition Ver.11</span>
+  <p class="lead">CSVは端末内だけで処理します。Ver.11では、ブートストラップと複数のブロック法の比較、VaR・CVaR・ソルティノレシオを追加しました。</p>
 </header>
 
 <section class="panel">
@@ -198,20 +198,72 @@
 
   <section id="monte" class="page" hidden>
     <div class="panel">
-      <h2>実データ型モンテカルロ</h2>
+      <h2>実データ型モンテカルロ Ver.11</h2>
       <div class="grid">
-        <div class="field"><label>予測年数</label><select id="mcYears"><option>1</option><option selected>5</option><option>10</option><option>20</option></select></div>
-        <div class="field"><label>試行回数</label><select id="mcRuns"><option>500</option><option selected>1000</option><option>3000</option><option>5000</option></select></div>
-        <div class="field"><label>モデル</label><select id="mcModel"><option value="bootstrap" selected>実データ・ブートストラップ</option><option value="block">実データ・ブロック法</option><option value="normal">比較用・正規分布</option></select></div>
-        <div class="field"><label>元本割れ判定</label><select id="lossBasis"><option value="total" selected>最終時点の累計投資元本</option><option value="initial">現在評価額</option></select></div>
-        <div class="field"><label>乱数シード</label><input id="mcSeed" type="number" value="20260801" step="1"></div>
-        <div class="field"><label>ブロック日数</label><select id="blockDays"><option>5</option><option selected>21</option><option>63</option></select></div>
+        <div class="field">
+          <label>予測年数</label>
+          <select id="mcYears">
+            <option>1</option><option selected>5</option><option>10</option><option>20</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>試行回数</label>
+          <select id="mcRuns">
+            <option>500</option><option selected>1000</option><option>3000</option><option>5000</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>単独実行モデル</label>
+          <select id="mcModel">
+            <option value="bootstrap" selected>実データ・ブートストラップ</option>
+            <option value="block">実データ・ブロック法</option>
+            <option value="normal">比較用・正規分布</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>元本割れ判定</label>
+          <select id="lossBasis">
+            <option value="total" selected>最終時点の累計投資元本</option>
+            <option value="initial">現在評価額</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>乱数シード</label>
+          <input id="mcSeed" type="number" value="20260801" step="1">
+        </div>
+        <div class="field">
+          <label>ブロック日数</label>
+          <select id="blockDays">
+            <option value="5">5日</option>
+            <option value="10">10日</option>
+            <option value="20" selected>20日</option>
+            <option value="21">21営業日</option>
+            <option value="63">63営業日</option>
+          </select>
+        </div>
       </div>
-      <button id="runMonte" class="primary">実データでシミュレーション</button>
-      <p class="small">ブートストラップは、CSVに含まれる実際の日次リターンを繰り返し抽出します。ブロック法は連続した値動きをまとめて抽出します。</p>
+
+      <div class="grid">
+        <button id="runMonte" class="primary">選択モデルを実行</button>
+        <button id="compareMonte" class="green">4手法を比較</button>
+      </div>
+
+      <p class="small">
+        ブートストラップは日次リターンを1日ずつ再抽出します。ブロック法は5日・10日・20日の連続した値動きを保ったまま再抽出します。
+      </p>
+
       <div id="monteResult" style="margin-top:14px"></div>
       <div id="monteChart" class="chart" style="margin-top:14px"></div>
       <div id="yearlyMonte" style="margin-top:14px"></div>
+    </div>
+
+    <div class="panel">
+      <h2>モンテカルロ手法比較</h2>
+      <div id="monteCompareStatus" class="status">「4手法を比較」を押してください。</div>
+      <div id="monteCompareTable" style="margin-top:14px"></div>
+      <div id="monteCompareComment" class="comment" style="margin-top:14px">
+        同じ条件と乱数シードで、ブートストラップ・5日・10日・20日ブロック法を比較します。
+      </div>
     </div>
   </section>
 
