@@ -1,5 +1,5 @@
 "use strict";
-const APP_VERSION="17.0";
+const APP_VERSION="18.0";
 
 /* =========================================================
    Ver.12 Integrated Professional Monte Carlo Engine
@@ -856,6 +856,8 @@ function analyze(){
     const ds=simDist(d,initial,monthly,day,tax),gs=simGrowth(g,initial,monthly,day);
     const rs=[result("分配金受取",ds.principal,ds.total),result("分配金再投資",ds.principal,ds.reinvest),result("資産成長型",gs.principal,gs.value)];
     last={d,g,ds,gs,rs};
+    $("statStatus").className="status";
+    $("statStatus").textContent="分析データを更新しました。「統計予測を実行」を押してください。";
     $("measurementStatus").className="status";
     $("measurementStatus").textContent="分析データを更新しました。「予測精度を測定」を押してください。";
     $("advisorStatus").className="status";
@@ -4514,6 +4516,541 @@ MAPE ${result.bestModel.metrics.mape.toFixed(2)}%
 過去データでの精度であり、将来の精度を保証するものではありません。`;
 }
 
+
+/* =========================================================
+   Ver.18 Statistical Forecast Engine
+   ========================================================= */
+
+const StatisticalForecastEngine=(()=>{
+  function logReturns(rows){
+    const values=[];
+    for(let index=1;index<rows.length;index++){
+      const previous=rows[index-1].nav;
+      const current=rows[index].nav;
+      if(previous>0&&current>0){
+        values.push(Math.log(current/previous));
+      }
+    }
+    return values;
+  }
+
+  function ewmaVariance(values,lambda=.94){
+    if(!values.length)return 0;
+    let varianceValue=values[0]*values[0];
+    for(let index=1;index<values.length;index++){
+      varianceValue=lambda*varianceValue+
+        (1-lambda)*values[index-1]*values[index-1];
+    }
+    return Math.max(varianceValue,0);
+  }
+
+  function garchVarianceForecast(values,horizon){
+    if(values.length<10)return sd(values)**2;
+
+    const longVariance=variance(values,false);
+    let conditional=ewmaVariance(values,.94);
+    const alpha=.09;
+    const beta=.88;
+    const omega=Math.max(longVariance*(1-alpha-beta),1e-10);
+
+    let sum=0;
+    let lastShock=values.at(-1)**2;
+
+    for(let step=0;step<horizon;step++){
+      conditional=omega+alpha*lastShock+beta*conditional;
+      sum+=conditional;
+      lastShock=conditional;
+    }
+
+    return sum/Math.max(horizon,1);
+  }
+
+  function estimateStudentDf(values){
+    const kurt=excessKurtosis(values);
+    if(kurt<=0)return 30;
+    return clamp(6/kurt+4,4.1,30);
+  }
+
+  function zValue(interval){
+    if(interval>=.949)return 1.96;
+    if(interval>=.899)return 1.645;
+    return 1.282;
+  }
+
+  function tMultiplier(df,interval){
+    const z=zValue(interval);
+    const correction=1+(z*z+1)/(4*df);
+    return z*correction;
+  }
+
+  function driftEstimate(values,mode){
+    const historical=mean(values);
+    const recent=mean(values.slice(-Math.min(21,values.length)));
+
+    if(mode==="garch")return historical*.45+recent*.25;
+    if(mode==="student-t")return historical*.40+recent*.30;
+    if(mode==="regime")return historical*.30+recent*.55;
+    return historical*.40+recent*.35;
+  }
+
+  function regimeAdjustment(regime){
+    return {
+      bull:.00035,
+      neutral:0,
+      bear:-.00035,
+      volatile:-.00010
+    }[regime]||0;
+  }
+
+  function forecastModel(rows,horizon,interval,modelId,regime){
+    const returnsValue=logReturns(rows);
+    if(returnsValue.length<30){
+      throw new Error("統計予測には30営業日以上のデータが必要です。");
+    }
+
+    const latest=rows.at(-1).nav;
+    let dailyDrift=driftEstimate(returnsValue,modelId);
+    let dailyVariance=variance(returnsValue,false);
+    let multiplier=zValue(interval);
+    let df=null;
+
+    if(modelId==="garch"){
+      dailyVariance=garchVarianceForecast(returnsValue,horizon);
+    }
+
+    if(modelId==="student-t"){
+      df=estimateStudentDf(returnsValue);
+      multiplier=tMultiplier(df,interval);
+      dailyVariance=variance(returnsValue,false);
+    }
+
+    if(modelId==="regime"){
+      dailyDrift+=regimeAdjustment(regime);
+      const regimeScale={
+        bull:.90,
+        neutral:1,
+        bear:1.15,
+        volatile:1.45
+      }[regime]||1;
+      dailyVariance=ewmaVariance(returnsValue,.92)*regimeScale;
+    }
+
+    const center=latest*Math.exp(dailyDrift*horizon);
+    const spread=multiplier*Math.sqrt(
+      Math.max(dailyVariance,0)*horizon
+    );
+
+    return {
+      id:modelId,
+      center,
+      low:latest*Math.exp(dailyDrift*horizon-spread),
+      high:latest*Math.exp(dailyDrift*horizon+spread),
+      dailyDrift,
+      annualizedVol:Math.sqrt(Math.max(dailyVariance,0))*Math.sqrt(252)*100,
+      df
+    };
+  }
+
+  function measurementWeights(){
+    const measurement=last.measurement;
+    if(!measurement?.modelResults?.length)return null;
+
+    const raw={};
+    for(const model of measurement.modelResults){
+      raw[model.id]=Math.max(model.metrics.score,5);
+    }
+
+    const total=Object.values(raw).reduce((sum,value)=>sum+value,0)||1;
+    return Object.fromEntries(
+      Object.entries(raw).map(([key,value])=>[key,value/total])
+    );
+  }
+
+  function ensemble(models,regime){
+    const learning=LearningSystem.getModelWeights();
+    const measurement=measurementWeights();
+
+    const modelWeightMap={
+      garch:.28,
+      "student-t":.25,
+      regime:.27,
+      baseline:.20
+    };
+
+    if(regime==="volatile"){
+      modelWeightMap["student-t"]+=.10;
+      modelWeightMap.garch+=.05;
+      modelWeightMap.baseline-=.10;
+      modelWeightMap.regime-=.05;
+    }else if(regime==="bull"||regime==="bear"){
+      modelWeightMap.regime+=.10;
+      modelWeightMap.baseline-=.05;
+      modelWeightMap.garch-=.05;
+    }
+
+    if(learning){
+      const qualityBoost=Math.min(
+        Object.values(learning).reduce((sum,value)=>sum+value,0),
+        1
+      );
+      modelWeightMap.baseline+=qualityBoost*.05;
+    }
+
+    if(measurement){
+      const averageScore=mean(
+        last.measurement.modelResults.map(item=>item.metrics.score)
+      );
+      if(averageScore<55){
+        modelWeightMap["student-t"]+=.05;
+        modelWeightMap.garch+=.05;
+        modelWeightMap.baseline-=.10;
+      }
+    }
+
+    const total=Object.values(modelWeightMap)
+      .reduce((sum,value)=>sum+Math.max(value,0),0)||1;
+
+    const normalized=Object.fromEntries(
+      Object.entries(modelWeightMap).map(
+        ([key,value])=>[key,Math.max(value,0)/total]
+      )
+    );
+
+    const lookup=Object.fromEntries(models.map(model=>[model.id,model]));
+    const baseline=lookup.baseline;
+
+    const center=
+      lookup.garch.center*normalized.garch+
+      lookup["student-t"].center*normalized["student-t"]+
+      lookup.regime.center*normalized.regime+
+      baseline.center*normalized.baseline;
+
+    const low=
+      lookup.garch.low*normalized.garch+
+      lookup["student-t"].low*normalized["student-t"]+
+      lookup.regime.low*normalized.regime+
+      baseline.low*normalized.baseline;
+
+    const high=
+      lookup.garch.high*normalized.garch+
+      lookup["student-t"].high*normalized["student-t"]+
+      lookup.regime.high*normalized.regime+
+      baseline.high*normalized.baseline;
+
+    return {
+      id:"ensemble",
+      center,
+      low,
+      high,
+      annualizedVol:mean(models.map(model=>model.annualizedVol)),
+      weights:normalized
+    };
+  }
+
+  function selectModel(models,regime,diagnostics){
+    const byId=Object.fromEntries(models.map(model=>[model.id,model]));
+
+    if(diagnostics.excessKurtosis>3||regime==="volatile"){
+      return {
+        id:"student-t",
+        reason:"裾の厚さまたは高ボラ局面が強いため、t分布を優先しました。"
+      };
+    }
+
+    if(Math.abs(diagnostics.lag1Autocorrelation)>.12){
+      return {
+        id:"regime",
+        reason:"短期の連続性が比較的強いため、レジーム切替モデルを優先しました。"
+      };
+    }
+
+    if(diagnostics.volatilityRatio>1.25){
+      return {
+        id:"garch",
+        reason:"直近ボラティリティが長期平均を上回るため、GARCH風モデルを優先しました。"
+      };
+    }
+
+    return {
+      id:"ensemble",
+      reason:"単一の特徴が支配的でないため、精度加重アンサンブルを選択しました。"
+    };
+  }
+
+  function diagnose(rows){
+    const values=logReturns(rows);
+    const recent=values.slice(-Math.min(21,values.length));
+    const long=values.slice(-Math.min(252,values.length));
+    const recentVol=sd(recent);
+    const longVol=sd(long);
+
+    return {
+      annualizedVol:sd(values)*Math.sqrt(252)*100,
+      recentAnnualizedVol:recentVol*Math.sqrt(252)*100,
+      volatilityRatio:longVol?recentVol/longVol:1,
+      skewness:skewness(values),
+      excessKurtosis:excessKurtosis(values),
+      lag1Autocorrelation:autocorrelation(values,1),
+      estimatedDf:estimateStudentDf(values)
+    };
+  }
+
+  function run(rows,options={}){
+    const horizon=Math.max(1,+options.horizon||21);
+    const lookback=Math.max(60,+options.lookback||252);
+    const interval=clamp(+options.interval||.90,.5,.99);
+    const requested=options.model||"auto";
+    const training=rows.slice(-Math.min(lookback,rows.length));
+
+    const regimeResult=MarketRegimeEngine.analyze(rows,{
+      window:Math.min(63,lookback),
+      horizon:Math.min(horizon,63),
+      count:5
+    });
+
+    const regime=regimeResult.classification.regime;
+    const diagnostics=diagnose(training);
+
+    const baselinePrediction=ForecastValidationEngine.predictAll(
+      training,
+      horizon,
+      interval
+    )["equal-ensemble"];
+
+    const models=[
+      forecastModel(training,horizon,interval,"garch",regime),
+      forecastModel(training,horizon,interval,"student-t",regime),
+      forecastModel(training,horizon,interval,"regime",regime),
+      {
+        id:"baseline",
+        center:baselinePrediction.center,
+        low:baselinePrediction.low,
+        high:baselinePrediction.high,
+        annualizedVol:diagnostics.annualizedVol
+      }
+    ];
+
+    const ensembleResult=ensemble(models,regime);
+    const allModels=[...models,ensembleResult];
+
+    const automatic=selectModel(allModels,regime,diagnostics);
+    const selectedId=requested==="auto"?automatic.id:requested;
+    const selected=allModels.find(model=>model.id===selectedId)
+      ||ensembleResult;
+
+    return {
+      horizon,
+      lookback,
+      interval,
+      requested,
+      selected,
+      selectedId,
+      automatic,
+      regime,
+      regimeResult,
+      diagnostics,
+      models:allModels
+    };
+  }
+
+  return Object.freeze({
+    run,
+    diagnose,
+    forecastModel
+  });
+})();
+
+function statModelLabel(id){
+  return {
+    garch:"GARCH風",
+    "student-t":"t分布",
+    regime:"レジーム切替",
+    baseline:"従来アンサンブル",
+    ensemble:"精度加重アンサンブル"
+  }[id]||id;
+}
+
+function runStatisticalForecast(){
+  const status=$("statStatus");
+
+  if(!last.d){
+    status.className="status bad";
+    status.textContent="先にCSVを読み込み、「分析を開始」を押してください。";
+    return;
+  }
+
+  status.className="status";
+  status.textContent="統計モデルを診断し、予測を作成しています…";
+
+  setTimeout(()=>{
+    try{
+      const result=StatisticalForecastEngine.run(last.d,{
+        horizon:+$("statHorizon").value,
+        lookback:+$("statLookback").value,
+        model:$("statModel").value,
+        interval:+$("statInterval").value
+      });
+
+      last.statistics=result;
+      renderStatisticalForecast(result);
+
+      status.className="status ok";
+      status.textContent="統計予測が完了しました。";
+    }catch(error){
+      console.error(error);
+      status.className="status bad";
+      status.textContent=`統計予測エラー：${error.message}`;
+    }
+  },50);
+}
+
+function renderStatisticalForecast(result){
+  const selected=result.selected;
+  const latest=last.d.at(-1).nav;
+  const forecastReturn=(selected.center/latest-1)*100;
+
+  $("statChoiceCards").innerHTML=`
+    <div class="card">
+      <div class="card-title">選択モデル</div>
+      <div class="card-value stat-auto">${statModelLabel(result.selectedId)}</div>
+    </div>
+    <div class="card">
+      <div class="card-title">現在局面</div>
+      <div class="card-value">${regimeLabel(result.regime)}</div>
+    </div>
+    <div class="card">
+      <div class="card-title">推定自由度</div>
+      <div class="card-value">${result.diagnostics.estimatedDf.toFixed(1)}</div>
+    </div>
+    <div class="card">
+      <div class="card-title">直近/長期ボラ比</div>
+      <div class="card-value">${result.diagnostics.volatilityRatio.toFixed(2)}</div>
+    </div>`;
+
+  $("statChoiceComment").textContent=result.requested==="auto"
+    ?`自動選択理由
+
+${result.automatic.reason}
+
+現在の局面：
+${regimeLabel(result.regime)}
+
+超過尖度：
+${result.diagnostics.excessKurtosis.toFixed(2)}
+
+1日自己相関：
+${result.diagnostics.lag1Autocorrelation.toFixed(3)}`
+    :`手動で${statModelLabel(result.selectedId)}を選択しています。自動判定では${statModelLabel(result.automatic.id)}が推奨されています。
+
+${result.automatic.reason}`;
+
+  $("statForecastCards").innerHTML=`
+    <div class="card">
+      <div class="card-title">現在基準価額</div>
+      <div class="card-value">${Math.round(latest).toLocaleString()}円</div>
+    </div>
+    <div class="card">
+      <div class="card-title">中心予測</div>
+      <div class="card-value">${Math.round(selected.center).toLocaleString()}円</div>
+      <div class="card-sub">${pct(forecastReturn)}</div>
+    </div>
+    <div class="card">
+      <div class="card-title">予測下限</div>
+      <div class="card-value">${Math.round(selected.low).toLocaleString()}円</div>
+    </div>
+    <div class="card">
+      <div class="card-title">予測上限</div>
+      <div class="card-value">${Math.round(selected.high).toLocaleString()}円</div>
+    </div>`;
+
+  lineChart(
+    $("statChart"),
+    [
+      {
+        name:"モデル中心値",
+        color:"#3b82f6",
+        values:result.models.map(model=>model.center)
+      },
+      {
+        name:"モデル下限",
+        color:"#f59e0b",
+        values:result.models.map(model=>model.low)
+      },
+      {
+        name:"モデル上限",
+        color:"#22c55e",
+        values:result.models.map(model=>model.high)
+      }
+    ]
+  );
+
+  $("statModelTable").innerHTML=`
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr>
+            <th>モデル</th>
+            <th>中心予測</th>
+            <th>下限</th>
+            <th>上限</th>
+            <th>年率ボラ</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${result.models.map(model=>`
+            <tr class="${model.id===result.selectedId?"stat-model-selected":""}">
+              <td>${statModelLabel(model.id)}</td>
+              <td>${Math.round(model.center).toLocaleString()}円</td>
+              <td>${Math.round(model.low).toLocaleString()}円</td>
+              <td>${Math.round(model.high).toLocaleString()}円</td>
+              <td>${(model.annualizedVol||0).toFixed(1)}%</td>
+            </tr>`).join("")}
+        </tbody>
+      </table>
+    </div>`;
+
+  const ensemble=result.models.find(model=>model.id==="ensemble");
+  $("statModelComment").textContent=ensemble?.weights
+    ?`精度加重アンサンブルの内部比率
+
+GARCH風 ${(ensemble.weights.garch*100).toFixed(1)}%
+t分布 ${(ensemble.weights["student-t"]*100).toFixed(1)}%
+レジーム切替 ${(ensemble.weights.regime*100).toFixed(1)}%
+従来モデル ${(ensemble.weights.baseline*100).toFixed(1)}%
+
+相場局面とVer.17の精度測定結果に応じて重みを調整しています。`
+    :"";
+
+  $("statRiskCards").innerHTML=`
+    <div class="card">
+      <div class="card-title">長期年率ボラ</div>
+      <div class="card-value">${result.diagnostics.annualizedVol.toFixed(1)}%</div>
+    </div>
+    <div class="card">
+      <div class="card-title">直近年率ボラ</div>
+      <div class="card-value">${result.diagnostics.recentAnnualizedVol.toFixed(1)}%</div>
+    </div>
+    <div class="card">
+      <div class="card-title">歪度</div>
+      <div class="card-value">${result.diagnostics.skewness.toFixed(2)}</div>
+    </div>
+    <div class="card">
+      <div class="card-title">超過尖度</div>
+      <div class="card-value">${result.diagnostics.excessKurtosis.toFixed(2)}</div>
+    </div>`;
+
+  let riskText;
+  if(result.diagnostics.volatilityRatio>1.3){
+    riskText="直近の変動率が長期平均より高く、予測範囲を広めに見る必要があります。";
+  }else if(result.diagnostics.excessKurtosis>3){
+    riskText="急落・急騰が正規分布より多い傾向があるため、t分布の結果を重視してください。";
+  }else{
+    riskText="統計的な異常は比較的小さく、アンサンブル予測を中心に確認できます。";
+  }
+
+  $("statRiskComment").textContent=riskText;
+}
+
 document.querySelectorAll(".tab").forEach(button=>{
   button.onclick=()=>{
     document.querySelectorAll(".tab").forEach(item=>item.classList.remove("active"));
@@ -4522,7 +5059,7 @@ document.querySelectorAll(".tab").forEach(button=>{
     $(button.dataset.page).hidden=false;
   };
 });
-$("distFile").onchange=e=>load(e.target,"dist");$("growthFile").onchange=e=>load(e.target,"growth");$("analyze").onclick=analyze;$("runBacktest").onclick=runForecastValidation;$("runRegime").onclick=runRegimeAnalysis;$("runAdvisor").onclick=runIntegratedAdvisor;$("savePrediction").onclick=saveCurrentPrediction;$("evaluatePredictions").onclick=evaluateSavedPredictions;$("clearLearning").onclick=clearLearningData;$("runAccuracyMeasurement").onclick=runAccuracyMeasurement;$("runMonte").onclick=runMonte;$("compareMonte").onclick=compareMonteMethods;$("calcFire").onclick=calcFire;$("calcStress").onclick=renderStress;$("analyzeMarket").onclick=()=>{analyzeMarketEnvironment();if(last.d){renderOutlook();buildMorningBrief()}};$("recalcOutlook").onclick=renderOutlook;$("saveSnapshot").onclick=saveSnapshot;$("clearHistory").onclick=clearHistory;$("whatWouldIDo").onclick=buildWhatWouldIDo;$("saveMemo").onclick=saveDailyMemo;$("clearMemo").onclick=clearDailyMemo;$("download").onclick=download;
+$("distFile").onchange=e=>load(e.target,"dist");$("growthFile").onchange=e=>load(e.target,"growth");$("analyze").onclick=analyze;$("runBacktest").onclick=runForecastValidation;$("runRegime").onclick=runRegimeAnalysis;$("runAdvisor").onclick=runIntegratedAdvisor;$("savePrediction").onclick=saveCurrentPrediction;$("evaluatePredictions").onclick=evaluateSavedPredictions;$("clearLearning").onclick=clearLearningData;$("runAccuracyMeasurement").onclick=runAccuracyMeasurement;$("runStatisticalEngine").onclick=runStatisticalForecast;$("runMonte").onclick=runMonte;$("compareMonte").onclick=compareMonteMethods;$("calcFire").onclick=calcFire;$("calcStress").onclick=renderStress;$("analyzeMarket").onclick=()=>{analyzeMarketEnvironment();if(last.d){renderOutlook();buildMorningBrief()}};$("recalcOutlook").onclick=renderOutlook;$("saveSnapshot").onclick=saveSnapshot;$("clearHistory").onclick=clearHistory;$("whatWouldIDo").onclick=buildWhatWouldIDo;$("saveMemo").onclick=saveDailyMemo;$("clearMemo").onclick=clearDailyMemo;$("download").onclick=download;
 $("taxMode").onchange=e=>$("taxRate").disabled=e.target.value==="before";
 try{const s=JSON.parse(localStorage.getItem("wcm5")||"{}");if(s.start)$("startDate").value=s.start;if(s.initial!=null)$("initial").value=s.initial;if(s.monthly!=null)$("monthly").value=s.monthly;if(s.day)$("day").value=s.day;if(s.taxMode)$("taxMode").value=s.taxMode;if(s.taxRate)$("taxRate").value=s.taxRate}catch(_){}
 if("serviceWorker"in navigator)navigator.serviceWorker.register("./sw.js").catch(()=>{});
