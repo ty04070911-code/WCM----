@@ -1,11 +1,11 @@
 {
-  "name": "WCM Analyzer Pro Ver.19",
+  "name": "WCM Analyzer Pro Ver.20",
   "short_name": "WCM Analyzer",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#07101d",
   "theme_color": "#08111f",
-  "description": "最近の成績、相場局面、予測期間を反映するAdaptive AIを搭載",
+  "description": "データ量に応じた自動モード切替と最適設定提案を搭載",
   "icons": [
     {
       "src": "./icon-192.svg",

@@ -12,15 +12,15 @@
   <meta name="apple-mobile-web-app-title" content="WCM Analyzer">
   <link rel="manifest" href="./manifest.json">
   <link rel="apple-touch-icon" href="./icon-192.svg">
-  <title>WCM Analyzer Pro Ver.19</title>
+  <title>WCM Analyzer Pro Ver.20</title>
 <link rel="stylesheet" href="./style.css?v=8">
 </head>
 <body>
 <main class="app">
 <header>
   <h1>WCM Analyzer Pro</h1>
-  <span class="badge">iPhone Edition Ver.19</span>
-  <p class="lead">CSVは端末内だけで処理します。Ver.12では、Ver.19では、最近の予測成績を重視し、相場局面別・予測期間別にモデル重みを自動更新するAdaptive AIを追加しました。</p>
+  <span class="badge">iPhone Edition Ver.20</span>
+  <p class="lead">CSVは端末内だけで処理します。Ver.12では、Ver.20では、CSVのデータ量を自動診断し、簡易・軽量・標準・高精度・フルAIへ自動切替するデータ適応モードを追加しました。</p>
 </header>
 
 <section class="panel">
@@ -63,6 +63,7 @@
     <button class="tab" data-page="measurement">精度測定</button>
     <button class="tab" data-page="statistics">統計モデル</button>
     <button class="tab" data-page="adaptive">Adaptive AI</button>
+    <button class="tab" data-page="automode">自動モード</button>
     <button class="tab" data-page="monte">モンテカルロ</button>
     <button class="tab" data-page="stress">暴落テスト</button>
     <button class="tab" data-page="fire">FIRE診断</button>
@@ -666,6 +667,37 @@
     <div class="panel">
       <h2>学習履歴</h2>
       <div id="adaptiveHistory"></div>
+    </div>
+  </section>
+
+  <section id="automode" class="page" hidden>
+    <div class="panel">
+      <h2>データ量自動モード</h2>
+      <p class="small">
+        読み込んだCSVの営業日数に応じて、利用可能な最大精度モードと各機能の最適設定を自動提案します。
+      </p>
+      <button id="runAutoMode" class="primary">データ量を診断</button>
+      <div id="autoModeStatus" class="status" style="margin-top:14px">
+        CSV分析後に「データ量を診断」を押してください。
+      </div>
+    </div>
+
+    <div class="panel automode-hero">
+      <h2>現在利用できるモード</h2>
+      <div id="autoModeHero"></div>
+      <div id="autoModeBar" style="margin-top:14px"></div>
+      <div id="autoModeComment" class="comment" style="margin-top:14px"></div>
+    </div>
+
+    <div class="panel">
+      <h2>機能別の最適設定</h2>
+      <div id="autoModeTable"></div>
+      <div id="autoModeAdvice" class="comment" style="margin-top:14px"></div>
+    </div>
+
+    <div class="panel">
+      <h2>次のモードまで</h2>
+      <div id="autoModeProgressCards" class="cards"></div>
     </div>
   </section>
 

@@ -342,3 +342,28 @@ textarea{
   gap:10px;
   font-weight:900;
 }
+
+/* Ver.20 Auto Data Mode */
+.automode-hero{
+  background:
+    radial-gradient(circle at top right,rgba(14,165,233,.20),transparent 40%),
+    var(--panel);
+}
+.automode-name{
+  font-size:42px;
+  font-weight:950;
+  line-height:1.1;
+}
+.automode-level{
+  margin-top:8px;
+  font-size:20px;
+  font-weight:900;
+}
+.mode-simple{color:#fca5a5}
+.mode-light{color:#fdba74}
+.mode-standard{color:#fde68a}
+.mode-advanced{color:#bef264}
+.mode-full{color:#86efac}
+.mode-ok{color:#86efac;font-weight:900}
+.mode-adjusted{color:#fde68a;font-weight:900}
+.mode-unavailable{color:#fca5a5;font-weight:900}
