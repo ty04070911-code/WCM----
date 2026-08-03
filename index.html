@@ -12,15 +12,15 @@
   <meta name="apple-mobile-web-app-title" content="WCM Analyzer">
   <link rel="manifest" href="./manifest.json">
   <link rel="apple-touch-icon" href="./icon-192.svg">
-  <title>WCM Analyzer Pro Ver.22.2.1</title>
-<link rel="stylesheet" href="./style.css?v=2221">
+  <title>WCM Analyzer Pro Ver.23</title>
+<link rel="stylesheet" href="./style.css?v=23">
 </head>
 <body>
 <main class="app">
 <header>
   <h1>WCM Analyzer Pro</h1>
-  <span class="badge">iPhone Edition Ver.22.2.1</span>
-  <p class="lead">Ver.22.2では、iPhoneから扱いやすいルート配置方式へ変更し、保存済みCSVの自動読込と手動CSV切替を安定化しました。</p>
+  <span class="badge">iPhone Edition Ver.23</span>
+  <p class="lead">Ver.23では、強気・基準・弱気の3シナリオ予測、確率表示、AI投資コメントを追加しました。</p>
 </header>
 
 <section class="panel auto-data-panel">
@@ -228,7 +228,7 @@
     <div class="panel">
       <h2>今後の基準価額予想チャート</h2>
       <div class="grid">
-        <div class="field"><label>予測期間</label><select id="futureChartHorizon"><option value="21" selected>1か月</option><option value="63">3か月</option><option value="126">半年</option><option value="252">1年</option></select></div>
+        <div class="field"><label>予測期間</label><select id="futureChartHorizon"><option value="5">1週間</option><option value="21" selected>1か月</option><option value="63">3か月</option><option value="126">半年</option><option value="252">1年</option></select></div>
         <div class="field"><label>予測モデル</label><select id="futureChartModel"><option value="auto" selected>自動選択</option><option value="ensemble">精度加重アンサンブル</option><option value="garch">GARCH風</option><option value="student-t">t分布</option><option value="regime">レジーム切替</option></select></div>
         <div class="field"><label>表示する実績期間</label><select id="futureHistoryDays"><option value="63">3か月</option><option value="126" selected>半年</option><option value="252">1年</option><option value="504">2年</option></select></div>
       </div>
@@ -237,6 +237,14 @@
       <div id="futureNavChart" class="future-chart" style="margin-top:14px"></div>
       <div id="futureChartLegend" class="future-legend"></div>
       <div id="futureChartComment" class="comment" style="margin-top:14px"></div>
+      <div class="panel scenario-panel" style="margin-top:14px">
+        <h3>3シナリオ確率</h3>
+        <div id="scenarioProbabilityCards" class="cards"></div>
+      </div>
+      <div class="panel" style="margin-top:14px">
+        <h3>WCM AIコメント</h3>
+        <div id="scenarioAiComment" class="comment"></div>
+      </div>
     </div>
     <div class="panel"><h2>次回分配金予測</h2><div id="distributionForecast"></div></div>
     <div class="panel"><h2>基準価額比較</h2><div id="navChart" class="chart"></div></div>
@@ -898,6 +906,6 @@
 </section>
 </main>
 
-<script src="./app.js?v=2221" defer></script>
+<script src="./app.js?v=23" defer></script>
 </body>
 </html>

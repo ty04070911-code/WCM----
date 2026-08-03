@@ -1,5 +1,5 @@
 "use strict";
-const APP_VERSION="22.2.1";
+const APP_VERSION="23.0";
 
 /* =========================================================
    Ver.12 Integrated Professional Monte Carlo Engine
@@ -562,41 +562,6 @@ function median(values){
     :(clean[middle-1]+clean[middle])/2;
 }
 function sd(a){if(a.length<2)return 0;const m=mean(a);return Math.sqrt(a.reduce((s,v)=>s+(v-m)**2,0)/(a.length-1))}
-
-function variance(a,sample=true){
-  if(a.length<(sample?2:1))return 0;
-  const m=mean(a);
-  return a.reduce((s,v)=>s+(v-m)**2,0)/(sample?a.length-1:a.length);
-}
-function skewness(a){
-  if(a.length<3)return 0;
-  const m=mean(a);
-  const sigma=Math.sqrt(Math.max(variance(a,false),0));
-  if(!sigma)return 0;
-  return mean(a.map(v=>(v-m)**3))/(sigma**3);
-}
-function excessKurtosis(a){
-  if(a.length<4)return 0;
-  const m=mean(a);
-  const sigma=Math.sqrt(Math.max(variance(a,false),0));
-  if(!sigma)return 0;
-  return mean(a.map(v=>(v-m)**4))/(sigma**4)-3;
-}
-function autocorrelation(a,lag=1){
-  if(a.length<=lag)return 0;
-  const m=mean(a);
-  let numerator=0;
-  let denominator=0;
-  for(let i=0;i<a.length;i++){
-    const centered=a[i]-m;
-    denominator+=centered*centered;
-    if(i>=lag){
-      numerator+=centered*(a[i-lag]-m);
-    }
-  }
-  return denominator?numerator/denominator:0;
-}
-
 function returns(rows){const a=[];for(let i=1;i<rows.length;i++)if(rows[i-1].nav>0)a.push(rows[i].nav/rows[i-1].nav-1);return a}
 function cagr(rows){const days=(rows.at(-1).date-rows[0].date)/86400000;return days>0?((rows.at(-1).nav/rows[0].nav)**(365.25/days)-1)*100:0}
 function mdd(rows){let h=-Infinity,w=0;for(const r of rows){h=Math.max(h,r.nav);w=Math.min(w,r.nav/h-1)}return w*100}
@@ -5816,6 +5781,193 @@ function renderAutoMode(diagnosis){
 
 
 
+
+/* =========================================================
+   Ver.23 Scenario AI
+   ========================================================= */
+
+const ScenarioAIEngine=(()=>{
+  function softmax(values){
+    const maxValue=Math.max(...values);
+    const expValues=values.map(value=>Math.exp(value-maxValue));
+    const total=expValues.reduce((sum,value)=>sum+value,0)||1;
+    return expValues.map(value=>value/total);
+  }
+
+  function calculateProbabilities({
+    latest,
+    center,
+    low,
+    high,
+    regime,
+    confidence,
+    annualizedVol
+  }){
+    const centerReturn=(center/latest-1)*100;
+    const upside=(high/latest-1)*100;
+    const downside=(low/latest-1)*100;
+
+    let bullScore=centerReturn*.35+upside*.08;
+    let baseScore=3-Math.abs(centerReturn)*.18;
+    let bearScore=-centerReturn*.35+Math.abs(downside)*.08;
+
+    if(regime==="bull"){
+      bullScore+=1.2;
+      bearScore-=.4;
+    }else if(regime==="bear"){
+      bearScore+=1.2;
+      bullScore-=.4;
+    }else if(regime==="volatile"){
+      bearScore+=.5;
+      bullScore+=.3;
+      baseScore-=.6;
+    }else{
+      baseScore+=.5;
+    }
+
+    const volPenalty=Math.max(annualizedVol-25,0)/20;
+    baseScore-=volPenalty;
+    bearScore+=volPenalty*.45;
+    bullScore+=volPenalty*.15;
+
+    const confidenceBoost=(confidence-50)/100;
+    if(centerReturn>=0)bullScore+=confidenceBoost;
+    else bearScore+=confidenceBoost;
+
+    const [bull,base,bear]=softmax([bullScore,baseScore,bearScore]);
+
+    return {
+      bull:bull*100,
+      base:base*100,
+      bear:bear*100
+    };
+  }
+
+  function actionAdvice({probabilities,centerReturn,lossProbability,regime}){
+    const bull=probabilities.bull;
+    const bear=probabilities.bear;
+
+    let accumulation;
+    let lumpSum;
+    let warning;
+
+    if(bear>=45||lossProbability>=45||regime==="bear"){
+      accumulation="積立継続は可能ですが、無理な増額は避ける判断です。";
+      lumpSum="一括投資は見送り、複数回に分ける方が安全です。";
+      warning="高";
+    }else if(bull>=45&&centerReturn>1){
+      accumulation="通常積立の継続が適しています。";
+      lumpSum="追加投資は一括ではなく、2〜4回に分ける判断が適しています。";
+      warning="低〜中";
+    }else{
+      accumulation="通常積立を維持し、相場の方向確認を待つ判断です。";
+      lumpSum="一括投資は急がず、少額の分割投資が適しています。";
+      warning="中";
+    }
+
+    return {accumulation,lumpSum,warning};
+  }
+
+  function generateComment({
+    probabilities,
+    selectedModel,
+    horizon,
+    latest,
+    center,
+    low,
+    high,
+    regime,
+    confidence,
+    annualizedVol,
+    lossProbability
+  }){
+    const centerReturn=(center/latest-1)*100;
+    const advice=actionAdvice({
+      probabilities,
+      centerReturn,
+      lossProbability,
+      regime
+    });
+
+    const dominant=Object.entries(probabilities)
+      .sort((a,b)=>b[1]-a[1])[0];
+
+    const dominantLabel={
+      bull:"強気",
+      base:"横ばい・基準",
+      bear:"弱気"
+    }[dominant[0]];
+
+    let interpretation;
+    if(dominant[0]==="bull"){
+      interpretation="上昇シナリオが最も優勢ですが、予測上限だけを前提にしないことが重要です。";
+    }else if(dominant[0]==="bear"){
+      interpretation="下落シナリオへの警戒が必要で、資金管理を優先すべき局面です。";
+    }else{
+      interpretation="方向感が弱く、上昇・下落のどちらにも動き得る局面です。";
+    }
+
+    return `WCM AI分析
+
+最有力シナリオ：
+${dominantLabel} ${dominant[1].toFixed(1)}%
+
+予測期間：
+${horizon}営業日
+
+選択モデル：
+${selectedModel}
+
+現在基準価額：
+${Math.round(latest).toLocaleString()}円
+
+中心予測：
+${Math.round(center).toLocaleString()}円
+（${centerReturn>=0?"+":""}${centerReturn.toFixed(2)}%）
+
+予測範囲：
+${Math.round(low).toLocaleString()}円 〜 ${Math.round(high).toLocaleString()}円
+
+現在の相場局面：
+${regimeLabel(regime)}
+
+AI信頼度：
+${confidence.toFixed(0)}点
+
+年率ボラティリティ：
+${annualizedVol.toFixed(1)}%
+
+${interpretation}
+
+積立判断：
+${advice.accumulation}
+
+一括投資判断：
+${advice.lumpSum}
+
+警戒度：
+${advice.warning}
+
+このコメントは過去データに基づく参考情報で、将来の成果を保証するものではありません。`;
+  }
+
+  return Object.freeze({
+    calculateProbabilities,
+    generateComment
+  });
+})();
+
+function estimateScenarioLossProbability(latest,center,low){
+  if(latest<=0)return 50;
+  const centerReturn=(center/latest-1)*100;
+  const lowReturn=(low/latest-1)*100;
+  return clamp(
+    35-centerReturn*2.5+Math.abs(Math.min(lowReturn,0))*.6,
+    2,
+    95
+  );
+}
+
 const AutoDataService=(()=>{
   const paths={
     dist:"./wcm_distribution.csv",
@@ -6070,6 +6222,57 @@ function renderFutureNavChart(){
 90%予測範囲：${Math.round(selected.low).toLocaleString()}円〜${Math.round(selected.high).toLocaleString()}円
 
 将来経路は最終予測値と予測範囲を日次へ展開した参考シナリオです。`;
+
+    const confidence=last.advisor?.advisor?.confidence||
+      last.measurement?.integratedMetrics?.score||
+      55;
+
+    const probabilities=ScenarioAIEngine.calculateProbabilities({
+      latest,
+      center:selected.center,
+      low:selected.low,
+      high:selected.high,
+      regime:prediction.regime,
+      confidence,
+      annualizedVol:prediction.diagnostics?.annualizedVol||selected.annualizedVol||25
+    });
+
+    $("scenarioProbabilityCards").innerHTML=`
+      <div class="card scenario-bull">
+        <div class="card-title">強気シナリオ</div>
+        <div class="scenario-probability scenario-positive">${probabilities.bull.toFixed(1)}%</div>
+        <div class="card-sub">${Math.round(selected.high).toLocaleString()}円付近</div>
+      </div>
+      <div class="card scenario-base">
+        <div class="card-title">基準シナリオ</div>
+        <div class="scenario-probability scenario-neutral">${probabilities.base.toFixed(1)}%</div>
+        <div class="card-sub">${Math.round(selected.center).toLocaleString()}円付近</div>
+      </div>
+      <div class="card scenario-bear">
+        <div class="card-title">弱気シナリオ</div>
+        <div class="scenario-probability scenario-negative">${probabilities.bear.toFixed(1)}%</div>
+        <div class="card-sub">${Math.round(selected.low).toLocaleString()}円付近</div>
+      </div>`;
+
+    const lossProbability=estimateScenarioLossProbability(
+      latest,
+      selected.center,
+      selected.low
+    );
+
+    $("scenarioAiComment").textContent=ScenarioAIEngine.generateComment({
+      probabilities,
+      selectedModel:statModelLabel(prediction.selectedId),
+      horizon:prediction.horizon,
+      latest,
+      center:selected.center,
+      low:selected.low,
+      high:selected.high,
+      regime:prediction.regime,
+      confidence,
+      annualizedVol:prediction.diagnostics?.annualizedVol||selected.annualizedVol||25,
+      lossProbability
+    });
     status.className="status ok";
     status.textContent="予想チャートを更新しました。";
   }catch(error){

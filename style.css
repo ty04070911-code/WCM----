@@ -393,3 +393,25 @@ textarea{
 .source-live{background:#14532d;color:#bbf7d0}
 .source-cache{background:#78350f;color:#fde68a}
 .source-manual{background:#334155;color:#e2e8f0}
+
+
+/* Ver.23 Scenario AI */
+.scenario-panel{
+  background:
+    radial-gradient(circle at top right,rgba(59,130,246,.10),transparent 40%),
+    var(--panel);
+}
+.scenario-bull{border-color:#16a34a}
+.scenario-base{border-color:#2563eb}
+.scenario-bear{border-color:#dc2626}
+.scenario-probability{
+  font-size:34px;
+  font-weight:950;
+}
+.scenario-label{
+  font-size:15px;
+  font-weight:900;
+}
+.scenario-positive{color:#86efac}
+.scenario-neutral{color:#bfdbfe}
+.scenario-negative{color:#fca5a5}
