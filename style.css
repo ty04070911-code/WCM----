@@ -376,3 +376,20 @@ textarea{
 .future-legend i{display:inline-block;width:18px;height:4px;border-radius:999px}
 .auto-data-ready{color:#86efac;font-weight:900}
 .auto-data-error{color:#fca5a5;font-weight:900}
+
+
+/* Ver.22 direct auto data */
+.source-card-live{border-color:#16a34a}
+.source-card-cache{border-color:#d97706}
+.source-card-manual{border-color:#64748b}
+.source-badge{
+  display:inline-block;
+  padding:5px 9px;
+  border-radius:999px;
+  font-size:12px;
+  font-weight:900;
+  margin-top:6px;
+}
+.source-live{background:#14532d;color:#bbf7d0}
+.source-cache{background:#78350f;color:#fde68a}
+.source-manual{background:#334155;color:#e2e8f0}

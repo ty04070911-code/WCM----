@@ -12,26 +12,30 @@
   <meta name="apple-mobile-web-app-title" content="WCM Analyzer">
   <link rel="manifest" href="./manifest.json">
   <link rel="apple-touch-icon" href="./icon-192.svg">
-  <title>WCM Analyzer Pro Ver.21</title>
-<link rel="stylesheet" href="./style.css?v=21">
+  <title>WCM Analyzer Pro Ver.22</title>
+<link rel="stylesheet" href="./style.css?v=22">
 </head>
 <body>
 <main class="app">
 <header>
   <h1>WCM Analyzer Pro</h1>
-  <span class="badge">iPhone Edition Ver.21</span>
-  <p class="lead">Ver.21では、公式CSVの自動更新と、実績から将来予測へつながる基準価額予想チャートを追加しました。</p>
+  <span class="badge">iPhone Edition Ver.22</span>
+  <p class="lead">Ver.22では、公式サイトからの直接CSV取得、端末キャッシュ、手動CSVへの自動切替を追加しました。</p>
 </header>
 
 <section class="panel auto-data-panel">
   <h2>公式CSV自動更新</h2>
-  <p class="small">GitHub Actionsが公式ページから取得した最新CSVを読み込みます。失敗時も手動CSVを利用できます。</p>
+  <p class="small">公式サイトから最新CSVの直接取得を試みます。取得できない場合は端末キャッシュ、最後に手動CSVへ切り替えます。</p>
   <div class="grid">
-    <button id="loadAutoData" class="green">最新データを自動読込</button>
-    <button id="analyzeAutoData" class="primary" disabled>自動データで分析開始</button>
+    <button id="loadAutoData" class="green">公式サイトから自動取得</button>
+    <button id="analyzeAutoData" class="primary" disabled>取得データで分析開始</button>
   </div>
   <div id="autoDataStatus" class="status" style="margin-top:14px">自動データを確認しています…</div>
   <div id="autoDataMeta" class="small" style="margin-top:8px"></div>
+  <div id="autoDataSourceCards" class="cards" style="margin-top:14px"></div>
+  <div class="small" style="margin-top:10px">
+    ※公式サイト側の通信制限により直接取得できない場合があります。その場合も、前回取得した端末キャッシュまたは手動CSVを利用できます。
+  </div>
 </section>
 
 <section class="panel">
@@ -888,6 +892,6 @@
 </section>
 </main>
 
-<script src="./app.js?v=21" defer></script>
+<script src="./app.js?v=22" defer></script>
 </body>
 </html>
