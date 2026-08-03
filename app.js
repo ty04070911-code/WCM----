@@ -1,5 +1,5 @@
 "use strict";
-const APP_VERSION="18.0";
+const APP_VERSION="19.0";
 
 /* =========================================================
    Ver.12 Integrated Professional Monte Carlo Engine
@@ -856,6 +856,8 @@ function analyze(){
     const ds=simDist(d,initial,monthly,day,tax),gs=simGrowth(g,initial,monthly,day);
     const rs=[result("分配金受取",ds.principal,ds.total),result("分配金再投資",ds.principal,ds.reinvest),result("資産成長型",gs.principal,gs.value)];
     last={d,g,ds,gs,rs};
+    $("adaptiveStatus").className="status";
+    $("adaptiveStatus").textContent="分析データを更新しました。必要に応じてAdaptive AIを再学習してください。";
     $("statStatus").className="status";
     $("statStatus").textContent="分析データを更新しました。「統計予測を実行」を押してください。";
     $("measurementStatus").className="status";
@@ -3531,7 +3533,21 @@ function buildAdvisorMonte(horizon,runs){
     ?(medianMax-medianMin)/medianAverage*100
     :0;
 
-  const learnedWeights=LearningSystem.getModelWeights();
+  let learnedWeights=LearningSystem.getModelWeights();
+
+  try{
+    const regime=last.regime?.classification?.regime
+      ||last.advisor?.regimeResult?.classification?.regime
+      ||"unknown";
+    const horizon=+$("advisorHorizon")?.value||21;
+    const adaptiveWeights=AdaptiveAIEngine.effectiveWeights(regime,horizon);
+
+    if(adaptiveWeights){
+      learnedWeights=adaptiveWeights;
+    }
+  }catch(error){
+    console.warn("Adaptive AI重みの取得に失敗しました。",error);
+  }
 
   function weightedMetric(selector){
     if(!learnedWeights){
@@ -5051,6 +5067,376 @@ t分布 ${(ensemble.weights["student-t"]*100).toFixed(1)}%
   $("statRiskComment").textContent=riskText;
 }
 
+
+/* =========================================================
+   Ver.19 Adaptive AI
+   ========================================================= */
+
+const AdaptiveAIEngine=(()=>{
+  const STORAGE_KEY="wcm19-adaptive-ai-v1";
+  const MODEL_IDS=["iid","moving-block","stationary","random-block","hybrid"];
+  const MODEL_LABELS={
+    iid:"単日ブートストラップ",
+    "moving-block":"移動ブロック法",
+    stationary:"定常ブートストラップ",
+    "random-block":"ランダム長ブロック",
+    hybrid:"混合モデル"
+  };
+
+  function load(){
+    try{
+      const data=JSON.parse(localStorage.getItem(STORAGE_KEY)||"null");
+      if(data&&data.version===1)return data;
+    }catch(error){
+      console.warn("Adaptive AI読込失敗",error);
+    }
+    return {
+      version:1,
+      weights:Object.fromEntries(MODEL_IDS.map(id=>[id,1/MODEL_IDS.length])),
+      byRegime:{},
+      byHorizon:{},
+      history:[],
+      confidence:0,
+      sampleCount:0,
+      updatedAt:null
+    };
+  }
+
+  function save(state){
+    localStorage.setItem(STORAGE_KEY,JSON.stringify(state));
+  }
+
+  function reset(){
+    localStorage.removeItem(STORAGE_KEY);
+  }
+
+  function normalize(raw){
+    const total=Object.values(raw).reduce((sum,value)=>sum+Math.max(value,0),0)||1;
+    return Object.fromEntries(
+      Object.entries(raw).map(([key,value])=>[
+        key,
+        Math.max(value,0)/total
+      ])
+    );
+  }
+
+  function recencyWeight(index,total,decay){
+    const age=Math.max(total-index-1,0);
+    return Math.pow(decay,age);
+  }
+
+  function scoreRecord(record){
+    const errorScore=1/Math.max(record.errorPct||100,.5)**2;
+    const directionBonus=record.directionCorrect?1.35:.70;
+    const intervalBonus=record.intervalHit?1.10:.90;
+    return errorScore*directionBonus*intervalBonus;
+  }
+
+  function collectLearningRecords(){
+    const state=LearningSystem.loadState();
+    const records=[];
+
+    for(const prediction of state.predictions||[]){
+      if(!prediction.evaluated)continue;
+      for(const model of prediction.modelResults||[]){
+        records.push({
+          modelId:model.id,
+          regime:prediction.regime||"unknown",
+          horizon:prediction.horizon||21,
+          errorPct:model.errorPct,
+          directionCorrect:model.directionCorrect,
+          intervalHit:model.intervalHit,
+          actualDate:prediction.actualDate||prediction.targetDate||prediction.originDate
+        });
+      }
+    }
+
+    return records.sort((a,b)=>
+      String(a.actualDate).localeCompare(String(b.actualDate))
+    );
+  }
+
+  function buildWeights(records,decay,filterFn=()=>true){
+    const filtered=records.filter(filterFn);
+    const raw=Object.fromEntries(MODEL_IDS.map(id=>[id,.0001]));
+
+    filtered.forEach((record,index)=>{
+      if(!(record.modelId in raw))return;
+      raw[record.modelId]+=
+        scoreRecord(record)*
+        recencyWeight(index,filtered.length,decay);
+    });
+
+    return {
+      count:filtered.length,
+      weights:normalize(raw)
+    };
+  }
+
+  function measurementFallback(){
+    const measurement=last.measurement;
+    if(!measurement?.modelResults?.length)return null;
+
+    const mapping={
+      historical:"iid",
+      ewma:"stationary",
+      momentum:"moving-block",
+      "mean-reversion":"random-block",
+      "equal-ensemble":"hybrid"
+    };
+
+    const raw=Object.fromEntries(MODEL_IDS.map(id=>[id,.0001]));
+    for(const item of measurement.modelResults){
+      const id=mapping[item.id];
+      if(id)raw[id]+=Math.max(item.metrics.score,1);
+    }
+    return normalize(raw);
+  }
+
+  function blendWeights(primary,fallback,primaryStrength){
+    if(!fallback)return primary;
+    const strength=clamp(primaryStrength,0,1);
+    const raw={};
+    for(const id of MODEL_IDS){
+      raw[id]=(primary[id]||0)*strength+(fallback[id]||0)*(1-strength);
+    }
+    return normalize(raw);
+  }
+
+  function confidence(sampleCount,weights,minimum){
+    const maxWeight=Math.max(...Object.values(weights));
+    const concentration=clamp((maxWeight-.20)/.45,0,1);
+    const sampleScore=clamp(sampleCount/Math.max(minimum*4,20),0,1);
+    return clamp((sampleScore*.70+concentration*.30)*100,0,100);
+  }
+
+  function train({horizon=21,decay=.96,minimum=5}={}){
+    const records=collectLearningRecords();
+    const globalResult=buildWeights(records,decay);
+    const fallback=measurementFallback();
+    const strength=clamp(globalResult.count/Math.max(minimum*4,20),0,1);
+    const weights=blendWeights(globalResult.weights,fallback,strength);
+
+    const regimes=["bull","neutral","bear","volatile","unknown"];
+    const byRegime={};
+    for(const regime of regimes){
+      const result=buildWeights(records,decay,r=>r.regime===regime);
+      if(result.count){
+        byRegime[regime]={
+          count:result.count,
+          weights:blendWeights(
+            result.weights,
+            weights,
+            clamp(result.count/Math.max(minimum*2,10),0,1)
+          )
+        };
+      }
+    }
+
+    const horizons=[5,21,63,126];
+    const byHorizon={};
+    for(const value of horizons){
+      const result=buildWeights(records,decay,r=>Number(r.horizon)===value);
+      if(result.count){
+        byHorizon[value]={
+          count:result.count,
+          weights:blendWeights(
+            result.weights,
+            weights,
+            clamp(result.count/Math.max(minimum*2,10),0,1)
+          )
+        };
+      }
+    }
+
+    const aiConfidence=confidence(globalResult.count,weights,minimum);
+    const previous=load();
+    const snapshot={
+      date:new Date().toISOString(),
+      sampleCount:globalResult.count,
+      confidence:aiConfidence,
+      topModel:Object.entries(weights).sort((a,b)=>b[1]-a[1])[0][0],
+      weights
+    };
+
+    const state={
+      version:1,
+      weights,
+      byRegime,
+      byHorizon,
+      history:[snapshot,...(previous.history||[])].slice(0,30),
+      confidence:aiConfidence,
+      sampleCount:globalResult.count,
+      updatedAt:snapshot.date,
+      settings:{horizon,decay,minimum}
+    };
+
+    save(state);
+    return state;
+  }
+
+  function effectiveWeights(regime,horizon){
+    const state=load();
+    let result={...state.weights};
+
+    const regimeData=state.byRegime?.[regime];
+    if(regimeData){
+      result=blendWeights(
+        regimeData.weights,
+        result,
+        clamp(regimeData.count/20,0,1)
+      );
+    }
+
+    const horizonData=state.byHorizon?.[horizon];
+    if(horizonData){
+      result=blendWeights(
+        horizonData.weights,
+        result,
+        clamp(horizonData.count/20,0,1)
+      );
+    }
+
+    return normalize(result);
+  }
+
+  return Object.freeze({
+    load,
+    save,
+    reset,
+    train,
+    effectiveWeights,
+    labels:()=>({...MODEL_LABELS})
+  });
+})();
+
+function runAdaptiveAI(){
+  const status=$("adaptiveStatus");
+
+  try{
+    const state=AdaptiveAIEngine.train({
+      horizon:+$("adaptiveHorizon").value||21,
+      decay:+$("adaptiveDecay").value||.96,
+      minimum:+$("adaptiveMinimum").value||5
+    });
+
+    renderAdaptiveAI(state);
+    status.className="status ok";
+    status.textContent=`Adaptive AIの学習が完了しました。学習件数：${state.sampleCount}件`;
+  }catch(error){
+    console.error(error);
+    status.className="status bad";
+    status.textContent=`Adaptive AI学習エラー：${error.message}`;
+  }
+}
+
+function resetAdaptiveAI(){
+  if(!confirm("Adaptive AIの重みと履歴を初期化しますか？"))return;
+  AdaptiveAIEngine.reset();
+  renderAdaptiveAI(AdaptiveAIEngine.load());
+  $("adaptiveStatus").className="status";
+  $("adaptiveStatus").textContent="Adaptive AIを初期化しました。";
+}
+
+function renderAdaptiveAI(state=null){
+  const current=state||AdaptiveAIEngine.load();
+  const labels=AdaptiveAIEngine.labels();
+  const sorted=Object.entries(current.weights||{})
+    .sort((a,b)=>b[1]-a[1]);
+  const top=sorted[0]||["iid",.2];
+
+  let stateLabel;
+  if(current.confidence>=80)stateLabel="十分に学習";
+  else if(current.confidence>=55)stateLabel="学習中";
+  else if(current.confidence>0)stateLabel="初期学習";
+  else stateLabel="未学習";
+
+  $("adaptiveHero").innerHTML=`
+    <div class="adaptive-score">${current.confidence.toFixed(0)}点</div>
+    <div class="adaptive-state">AI信頼度・${stateLabel}</div>
+    <div class="small" style="margin-top:8px">
+      学習件数 ${current.sampleCount}件
+    </div>`;
+
+  $("adaptiveConfidenceBar").innerHTML=`
+    <div class="scorebar">
+      <span style="width:${current.confidence}%"></span>
+    </div>`;
+
+  $("adaptiveComment").textContent=current.sampleCount
+    ?`現在最も重視しているモデル：
+${labels[top[0]]}
+重み ${(top[1]*100).toFixed(1)}%
+
+最近の予測結果を強く反映し、相場局面と予測期間に応じて実効重みを変化させます。`
+    :"実績照合済みの予測がまだありません。Ver.16のAI学習で予測を保存し、後日実績照合を行うと学習できます。";
+
+  $("adaptiveWeights").innerHTML=sorted.map(([id,weight])=>`
+    <div class="weight-row">
+      <span>${labels[id]||id}</span>
+      <div class="weight-bar"><span style="width:${weight*100}%"></span></div>
+      <strong>${(weight*100).toFixed(1)}%</strong>
+    </div>`).join("");
+
+  $("adaptiveWeightComment").textContent=`Adaptive AIの重みは、平均誤差、方向的中、予測区間への収まり、最近の成績を組み合わせて計算します。
+
+学習件数が少ない場合は、Ver.17の精度測定結果を補助的に使用します。`;
+
+  const regimeNames={
+    bull:"強気",
+    neutral:"中立",
+    bear:"弱気",
+    volatile:"高ボラ",
+    unknown:"不明"
+  };
+
+  const regimeRows=Object.entries(current.byRegime||{});
+  $("adaptiveRegimeTable").innerHTML=regimeRows.length
+    ?`<div class="tablewrap"><table>
+      <thead><tr><th>局面</th><th>件数</th><th>最優秀モデル</th><th>重み</th></tr></thead>
+      <tbody>${regimeRows.map(([regime,data])=>{
+        const best=Object.entries(data.weights).sort((a,b)=>b[1]-a[1])[0];
+        return `<tr>
+          <td>${regimeNames[regime]||regime}</td>
+          <td>${data.count}</td>
+          <td>${labels[best[0]]||best[0]}</td>
+          <td>${(best[1]*100).toFixed(1)}%</td>
+        </tr>`;
+      }).join("")}</tbody>
+    </table></div>`
+    :'<div class="small">局面別に分けるための学習データがまだありません。</div>';
+
+  const horizonRows=Object.entries(current.byHorizon||{});
+  $("adaptiveHorizonTable").innerHTML=horizonRows.length
+    ?`<div class="tablewrap"><table>
+      <thead><tr><th>期間</th><th>件数</th><th>最優秀モデル</th><th>重み</th></tr></thead>
+      <tbody>${horizonRows.map(([horizon,data])=>{
+        const best=Object.entries(data.weights).sort((a,b)=>b[1]-a[1])[0];
+        return `<tr>
+          <td>${horizon}営業日</td>
+          <td>${data.count}</td>
+          <td>${labels[best[0]]||best[0]}</td>
+          <td>${(best[1]*100).toFixed(1)}%</td>
+        </tr>`;
+      }).join("")}</tbody>
+    </table></div>`
+    :'<div class="small">期間別に分けるための学習データがまだありません。</div>';
+
+  $("adaptiveHistory").innerHTML=current.history?.length
+    ?current.history.map(item=>`
+      <div class="adaptive-history-item">
+        <div class="adaptive-history-head">
+          <span>${new Date(item.date).toLocaleString("ja-JP")}</span>
+          <span>信頼度 ${item.confidence.toFixed(0)}点</span>
+        </div>
+        <div class="prediction-meta">
+          学習件数：${item.sampleCount}件<br>
+          最重要モデル：${labels[item.topModel]||item.topModel}
+        </div>
+      </div>`).join("")
+    :'<div class="small">学習履歴はありません。</div>';
+}
+
 document.querySelectorAll(".tab").forEach(button=>{
   button.onclick=()=>{
     document.querySelectorAll(".tab").forEach(item=>item.classList.remove("active"));
@@ -5059,7 +5445,7 @@ document.querySelectorAll(".tab").forEach(button=>{
     $(button.dataset.page).hidden=false;
   };
 });
-$("distFile").onchange=e=>load(e.target,"dist");$("growthFile").onchange=e=>load(e.target,"growth");$("analyze").onclick=analyze;$("runBacktest").onclick=runForecastValidation;$("runRegime").onclick=runRegimeAnalysis;$("runAdvisor").onclick=runIntegratedAdvisor;$("savePrediction").onclick=saveCurrentPrediction;$("evaluatePredictions").onclick=evaluateSavedPredictions;$("clearLearning").onclick=clearLearningData;$("runAccuracyMeasurement").onclick=runAccuracyMeasurement;$("runStatisticalEngine").onclick=runStatisticalForecast;$("runMonte").onclick=runMonte;$("compareMonte").onclick=compareMonteMethods;$("calcFire").onclick=calcFire;$("calcStress").onclick=renderStress;$("analyzeMarket").onclick=()=>{analyzeMarketEnvironment();if(last.d){renderOutlook();buildMorningBrief()}};$("recalcOutlook").onclick=renderOutlook;$("saveSnapshot").onclick=saveSnapshot;$("clearHistory").onclick=clearHistory;$("whatWouldIDo").onclick=buildWhatWouldIDo;$("saveMemo").onclick=saveDailyMemo;$("clearMemo").onclick=clearDailyMemo;$("download").onclick=download;
+$("distFile").onchange=e=>load(e.target,"dist");$("growthFile").onchange=e=>load(e.target,"growth");$("analyze").onclick=analyze;$("runBacktest").onclick=runForecastValidation;$("runRegime").onclick=runRegimeAnalysis;$("runAdvisor").onclick=runIntegratedAdvisor;$("savePrediction").onclick=saveCurrentPrediction;$("evaluatePredictions").onclick=evaluateSavedPredictions;$("clearLearning").onclick=clearLearningData;$("runAccuracyMeasurement").onclick=runAccuracyMeasurement;$("runStatisticalEngine").onclick=runStatisticalForecast;$("runAdaptiveAI").onclick=runAdaptiveAI;$("resetAdaptiveAI").onclick=resetAdaptiveAI;$("runMonte").onclick=runMonte;$("compareMonte").onclick=compareMonteMethods;$("calcFire").onclick=calcFire;$("calcStress").onclick=renderStress;$("analyzeMarket").onclick=()=>{analyzeMarketEnvironment();if(last.d){renderOutlook();buildMorningBrief()}};$("recalcOutlook").onclick=renderOutlook;$("saveSnapshot").onclick=saveSnapshot;$("clearHistory").onclick=clearHistory;$("whatWouldIDo").onclick=buildWhatWouldIDo;$("saveMemo").onclick=saveDailyMemo;$("clearMemo").onclick=clearDailyMemo;$("download").onclick=download;
 $("taxMode").onchange=e=>$("taxRate").disabled=e.target.value==="before";
 try{const s=JSON.parse(localStorage.getItem("wcm5")||"{}");if(s.start)$("startDate").value=s.start;if(s.initial!=null)$("initial").value=s.initial;if(s.monthly!=null)$("monthly").value=s.monthly;if(s.day)$("day").value=s.day;if(s.taxMode)$("taxMode").value=s.taxMode;if(s.taxRate)$("taxRate").value=s.taxRate}catch(_){}
 if("serviceWorker"in navigator)navigator.serviceWorker.register("./sw.js").catch(()=>{});
@@ -5071,3 +5457,5 @@ renderHistory();
 restoreDailyMemo();
 
 renderLearningSystem();
+
+renderAdaptiveAI();
