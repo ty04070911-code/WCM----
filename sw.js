@@ -1,4 +1,4 @@
-const CACHE="wcm-analyzer-v23-scenario-ai";
+const CACHE="wcm-analyzer-v23-1-stat-fix";
 const ASSETS=[
   "./",
   "./index.html",

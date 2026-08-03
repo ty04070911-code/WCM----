@@ -1,5 +1,5 @@
 "use strict";
-const APP_VERSION="23.0";
+const APP_VERSION="23.1";
 
 /* =========================================================
    Ver.12 Integrated Professional Monte Carlo Engine
@@ -562,6 +562,59 @@ function median(values){
     :(clean[middle-1]+clean[middle])/2;
 }
 function sd(a){if(a.length<2)return 0;const m=mean(a);return Math.sqrt(a.reduce((s,v)=>s+(v-m)**2,0)/(a.length-1))}
+
+function variance(values,sample=true){
+  const clean=(values||[]).filter(Number.isFinite);
+  if(clean.length<(sample?2:1))return 0;
+  const average=mean(clean);
+  const divisor=sample?clean.length-1:clean.length;
+  return clean.reduce(
+    (sum,value)=>sum+(value-average)**2,
+    0
+  )/divisor;
+}
+
+function skewness(values){
+  const clean=(values||[]).filter(Number.isFinite);
+  if(clean.length<3)return 0;
+  const average=mean(clean);
+  const sigma=Math.sqrt(variance(clean,false));
+  if(!sigma)return 0;
+  return mean(clean.map(value=>
+    ((value-average)/sigma)**3
+  ));
+}
+
+function excessKurtosis(values){
+  const clean=(values||[]).filter(Number.isFinite);
+  if(clean.length<4)return 0;
+  const average=mean(clean);
+  const sigma=Math.sqrt(variance(clean,false));
+  if(!sigma)return 0;
+  return mean(clean.map(value=>
+    ((value-average)/sigma)**4
+  ))-3;
+}
+
+function autocorrelation(values,lag=1){
+  const clean=(values||[]).filter(Number.isFinite);
+  if(clean.length<=lag||lag<1)return 0;
+  const average=mean(clean);
+  let numerator=0;
+  let denominator=0;
+
+  for(let index=0;index<clean.length;index++){
+    const centered=clean[index]-average;
+    denominator+=centered*centered;
+
+    if(index>=lag){
+      numerator+=centered*(clean[index-lag]-average);
+    }
+  }
+
+  return denominator?numerator/denominator:0;
+}
+
 function returns(rows){const a=[];for(let i=1;i<rows.length;i++)if(rows[i-1].nav>0)a.push(rows[i].nav/rows[i-1].nav-1);return a}
 function cagr(rows){const days=(rows.at(-1).date-rows[0].date)/86400000;return days>0?((rows.at(-1).nav/rows[0].nav)**(365.25/days)-1)*100:0}
 function mdd(rows){let h=-Infinity,w=0;for(const r of rows){h=Math.max(h,r.nav);w=Math.min(w,r.nav/h-1)}return w*100}
