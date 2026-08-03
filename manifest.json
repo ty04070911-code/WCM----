@@ -1,11 +1,11 @@
 {
-  "name": "WCM Analyzer Pro Ver.23.1",
+  "name": "WCM Analyzer Pro Ver.24",
   "short_name": "WCM Analyzer",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#07101d",
   "theme_color": "#08111f",
-  "description": "統計補助関数のスコープ不具合を修正した3シナリオAI版",
+  "description": "予測保存、実績照合、モデル重み自動更新を行う自己学習AIを搭載",
   "icons": [
     {
       "src": "./icon-192.svg",

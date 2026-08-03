@@ -1,5 +1,5 @@
 "use strict";
-const APP_VERSION="23.1";
+const APP_VERSION="24.0";
 
 /* =========================================================
    Ver.12 Integrated Professional Monte Carlo Engine
@@ -4774,6 +4774,10 @@ const StatisticalForecastEngine=(()=>{
   function ensemble(models,regime){
     const learning=LearningSystem.getModelWeights();
     const measurement=measurementWeights();
+    const selfLearningWeights=SelfLearningAI.effectiveWeights(
+      regime,
+      +$("futureChartHorizon")?.value||21
+    );
 
     const modelWeightMap={
       garch:.28,
@@ -4810,6 +4814,21 @@ const StatisticalForecastEngine=(()=>{
         modelWeightMap.garch+=.05;
         modelWeightMap.baseline-=.10;
       }
+    }
+
+    if(selfLearningWeights){
+      modelWeightMap.garch=
+        modelWeightMap.garch*.55+
+        (selfLearningWeights.garch||0)*.45;
+      modelWeightMap["student-t"]=
+        modelWeightMap["student-t"]*.55+
+        (selfLearningWeights["student-t"]||0)*.45;
+      modelWeightMap.regime=
+        modelWeightMap.regime*.55+
+        (selfLearningWeights.regime||0)*.45;
+      modelWeightMap.baseline=
+        modelWeightMap.baseline*.55+
+        (selfLearningWeights.baseline||0)*.45;
     }
 
     const total=Object.values(modelWeightMap)
@@ -6253,6 +6272,7 @@ function renderFutureNavChart(){
       +$("futureChartHorizon").value||21,
       $("futureChartModel").value||"auto"
     );
+    last.statistics=prediction;
     const historyDays=+$("futureHistoryDays").value||126;
     drawFutureForecastChart(
       $("futureNavChart"),
@@ -6376,6 +6396,549 @@ function drawFutureForecastChart(element,history,prediction){
   </svg>`;
 }
 
+
+/* =========================================================
+   Ver.24 Self Learning AI
+   ========================================================= */
+
+const SelfLearningAI=(()=>{
+  const STORAGE_KEY="wcm24-self-learning-v1";
+  const MODEL_IDS=["garch","student-t","regime","ensemble","baseline"];
+  const LABELS={
+    garch:"GARCH風",
+    "student-t":"t分布",
+    regime:"レジーム切替",
+    ensemble:"精度加重アンサンブル",
+    baseline:"従来アンサンブル"
+  };
+
+  function emptyState(){
+    return {
+      version:1,
+      predictions:[],
+      weights:Object.fromEntries(MODEL_IDS.map(id=>[id,1/MODEL_IDS.length])),
+      modelStats:{},
+      byRegime:{},
+      byHorizon:{},
+      confidence:0,
+      updatedAt:null
+    };
+  }
+
+  function load(){
+    try{
+      const parsed=JSON.parse(localStorage.getItem(STORAGE_KEY)||"null");
+      if(parsed&&parsed.version===1)return parsed;
+    }catch(error){
+      console.warn("自己学習データ読込失敗",error);
+    }
+    return emptyState();
+  }
+
+  function save(state){
+    localStorage.setItem(STORAGE_KEY,JSON.stringify(state));
+  }
+
+  function reset(){
+    localStorage.removeItem(STORAGE_KEY);
+  }
+
+  function normalize(raw){
+    const total=Object.values(raw).reduce(
+      (sum,value)=>sum+Math.max(value,0),
+      0
+    )||1;
+    return Object.fromEntries(
+      Object.entries(raw).map(([key,value])=>[
+        key,
+        Math.max(value,0)/total
+      ])
+    );
+  }
+
+  function currentForecastSnapshot(){
+    if(!last.d||!last.statistics){
+      throw new Error("先に将来予測チャートを作成してください。");
+    }
+
+    const statistics=last.statistics;
+    const latestRow=last.d.at(-1);
+    const horizon=statistics.horizon;
+    const regime=statistics.regime||"unknown";
+
+    const modelForecasts={};
+    for(const model of statistics.models||[]){
+      modelForecasts[model.id]={
+        center:model.center,
+        low:model.low,
+        high:model.high
+      };
+    }
+
+    return {
+      id:`sl-${Date.now()}-${Math.random().toString(36).slice(2,8)}`,
+      createdAt:new Date().toISOString(),
+      originDate:latestRow.dateText,
+      originDateValue:latestRow.date instanceof Date
+        ?latestRow.date.toISOString()
+        :String(latestRow.date||""),
+      originNav:latestRow.nav,
+      horizon,
+      regime,
+      selectedModel:statistics.selectedId,
+      integratedCenter:statistics.selected.center,
+      integratedLow:statistics.selected.low,
+      integratedHigh:statistics.selected.high,
+      modelForecasts,
+      evaluated:false,
+      actualDate:null,
+      actualNav:null,
+      modelResults:null
+    };
+  }
+
+  function addPrediction(snapshot){
+    const state=load();
+    state.predictions.unshift(snapshot);
+    state.predictions=state.predictions.slice(0,120);
+    save(state);
+    return state;
+  }
+
+  function findOriginIndex(rows,prediction){
+    return rows.findIndex(row=>{
+      if(row.dateText===prediction.originDate)return true;
+      const value=row.date instanceof Date
+        ?row.date.toISOString()
+        :String(row.date||"");
+      return value===prediction.originDateValue;
+    });
+  }
+
+  function evaluatePrediction(prediction,rows){
+    if(prediction.evaluated)return prediction;
+
+    const originIndex=findOriginIndex(rows,prediction);
+    if(originIndex<0)return prediction;
+
+    const targetIndex=originIndex+prediction.horizon;
+    if(targetIndex>=rows.length)return prediction;
+
+    const actualRow=rows[targetIndex];
+    const actualDirection=Math.sign(actualRow.nav-prediction.originNav);
+    const modelResults={};
+
+    for(const [modelId,forecast] of Object.entries(
+      prediction.modelForecasts||{}
+    )){
+      const errorPct=Math.abs(forecast.center-actualRow.nav)/actualRow.nav*100;
+      const signedErrorPct=(forecast.center-actualRow.nav)/actualRow.nav*100;
+      const predictedDirection=Math.sign(
+        forecast.center-prediction.originNav
+      );
+
+      modelResults[modelId]={
+        errorPct,
+        signedErrorPct,
+        directionCorrect:predictedDirection===actualDirection,
+        intervalHit:
+          actualRow.nav>=forecast.low&&
+          actualRow.nav<=forecast.high
+      };
+    }
+
+    return {
+      ...prediction,
+      evaluated:true,
+      actualDate:actualRow.dateText,
+      actualNav:actualRow.nav,
+      modelResults
+    };
+  }
+
+  function recencyWeight(index,total,decay=.96){
+    const age=Math.max(total-index-1,0);
+    return Math.pow(decay,age);
+  }
+
+  function resultScore(result){
+    const errorComponent=1/Math.max(result.errorPct,.5)**2;
+    const directionBonus=result.directionCorrect?1.35:.65;
+    const intervalBonus=result.intervalHit?1.10:.90;
+    return errorComponent*directionBonus*intervalBonus;
+  }
+
+  function aggregateStats(predictions){
+    const evaluated=predictions
+      .filter(item=>item.evaluated)
+      .sort((a,b)=>String(a.actualDate).localeCompare(String(b.actualDate)));
+
+    const buckets=Object.fromEntries(
+      MODEL_IDS.map(id=>[id,{
+        id,
+        label:LABELS[id],
+        count:0,
+        weightedScore:0,
+        errors:[],
+        signedErrors:[],
+        directionHits:0,
+        intervalHits:0,
+        weightTotal:0
+      }])
+    );
+
+    evaluated.forEach((prediction,index)=>{
+      const weight=recencyWeight(index,evaluated.length);
+      for(const [modelId,result] of Object.entries(
+        prediction.modelResults||{}
+      )){
+        if(!buckets[modelId])continue;
+        const bucket=buckets[modelId];
+        bucket.count+=1;
+        bucket.weightedScore+=resultScore(result)*weight;
+        bucket.weightTotal+=weight;
+        bucket.errors.push(result.errorPct);
+        bucket.signedErrors.push(result.signedErrorPct);
+        if(result.directionCorrect)bucket.directionHits+=1;
+        if(result.intervalHit)bucket.intervalHits+=1;
+      }
+    });
+
+    return Object.values(buckets).map(bucket=>{
+      const mape=bucket.count?mean(bucket.errors):0;
+      const bias=bucket.count?mean(bucket.signedErrors):0;
+      const directionHit=bucket.count
+        ?bucket.directionHits/bucket.count*100
+        :0;
+      const intervalCoverage=bucket.count
+        ?bucket.intervalHits/bucket.count*100
+        :0;
+      const adaptiveScore=bucket.weightTotal
+        ?bucket.weightedScore/bucket.weightTotal
+        :0;
+
+      return {
+        id:bucket.id,
+        label:bucket.label,
+        count:bucket.count,
+        mape,
+        bias,
+        directionHit,
+        intervalCoverage,
+        adaptiveScore
+      };
+    });
+  }
+
+  function weightsFromStats(stats){
+    const raw={};
+    for(const stat of stats){
+      raw[stat.id]=stat.count
+        ?Math.max(stat.adaptiveScore,.0001)
+        :.0001;
+    }
+    return normalize(raw);
+  }
+
+  function groupedWeights(predictions,keyGetter,globalWeights){
+    const groups={};
+
+    for(const prediction of predictions.filter(item=>item.evaluated)){
+      const key=String(keyGetter(prediction));
+      (groups[key]??=[]).push(prediction);
+    }
+
+    const result={};
+
+    for(const [key,items] of Object.entries(groups)){
+      const stats=aggregateStats(items);
+      const local=weightsFromStats(stats);
+      const strength=clamp(items.length/20,0,1);
+      const blended={};
+
+      for(const modelId of MODEL_IDS){
+        blended[modelId]=
+          (local[modelId]||0)*strength+
+          (globalWeights[modelId]||0)*(1-strength);
+      }
+
+      result[key]={
+        count:items.length,
+        weights:normalize(blended)
+      };
+    }
+
+    return result;
+  }
+
+  function confidence(predictions,weights){
+    const evaluated=predictions.filter(item=>item.evaluated);
+    const sampleScore=clamp(evaluated.length/40,0,1);
+    const maxWeight=Math.max(...Object.values(weights));
+    const concentration=clamp((maxWeight-.20)/.45,0,1);
+    return clamp(
+      (sampleScore*.75+concentration*.25)*100,
+      0,
+      100
+    );
+  }
+
+  function rebuild(rows){
+    const state=load();
+    const predictions=state.predictions.map(item=>
+      evaluatePrediction(item,rows)
+    );
+    const stats=aggregateStats(predictions);
+    const weights=weightsFromStats(stats);
+    const byRegime=groupedWeights(
+      predictions,
+      item=>item.regime||"unknown",
+      weights
+    );
+    const byHorizon=groupedWeights(
+      predictions,
+      item=>item.horizon||21,
+      weights
+    );
+
+    const next={
+      ...state,
+      predictions,
+      weights,
+      modelStats:Object.fromEntries(stats.map(item=>[item.id,item])),
+      byRegime,
+      byHorizon,
+      confidence:confidence(predictions,weights),
+      updatedAt:new Date().toISOString()
+    };
+
+    save(next);
+    return next;
+  }
+
+  function effectiveWeights(regime,horizon){
+    const state=load();
+    let weights={...state.weights};
+
+    const regimeData=state.byRegime?.[String(regime)];
+    if(regimeData){
+      const strength=clamp(regimeData.count/20,0,1);
+      for(const id of MODEL_IDS){
+        weights[id]=
+          (regimeData.weights[id]||0)*strength+
+          (weights[id]||0)*(1-strength);
+      }
+      weights=normalize(weights);
+    }
+
+    const horizonData=state.byHorizon?.[String(horizon)];
+    if(horizonData){
+      const strength=clamp(horizonData.count/20,0,1);
+      for(const id of MODEL_IDS){
+        weights[id]=
+          (horizonData.weights[id]||0)*strength+
+          (weights[id]||0)*(1-strength);
+      }
+      weights=normalize(weights);
+    }
+
+    return weights;
+  }
+
+  return Object.freeze({
+    load,
+    save,
+    reset,
+    currentForecastSnapshot,
+    addPrediction,
+    rebuild,
+    effectiveWeights,
+    labels:()=>({...LABELS})
+  });
+})();
+
+function saveCurrentLearningPrediction(){
+  const status=$("selfLearningStatus");
+
+  try{
+    const snapshot=SelfLearningAI.currentForecastSnapshot();
+    const state=SelfLearningAI.addPrediction(snapshot);
+    renderSelfLearning(state);
+
+    status.className="status ok";
+    status.textContent=
+      `${snapshot.horizon}営業日後の予測を学習用に保存しました。`;
+  }catch(error){
+    status.className="status bad";
+    status.textContent=`保存エラー：${error.message}`;
+  }
+}
+
+function evaluateSelfLearningPredictions(){
+  const status=$("selfLearningStatus");
+
+  if(!last.d){
+    status.className="status bad";
+    status.textContent="先にCSVを読み込み、分析を開始してください。";
+    return;
+  }
+
+  try{
+    const before=SelfLearningAI.load().predictions
+      .filter(item=>item.evaluated).length;
+    const state=SelfLearningAI.rebuild(last.d);
+    const after=state.predictions.filter(item=>item.evaluated).length;
+    const newlyEvaluated=after-before;
+
+    renderSelfLearning(state);
+
+    status.className="status ok";
+    status.textContent=newlyEvaluated>0
+      ?`${newlyEvaluated}件の予測を新しく実績照合しました。`
+      :"新しく照合できる予測はありませんでした。";
+  }catch(error){
+    status.className="status bad";
+    status.textContent=`実績照合エラー：${error.message}`;
+  }
+}
+
+function resetSelfLearningData(){
+  if(!confirm("自己学習データをすべて初期化しますか？"))return;
+
+  SelfLearningAI.reset();
+  const state=SelfLearningAI.load();
+  renderSelfLearning(state);
+
+  $("selfLearningStatus").className="status";
+  $("selfLearningStatus").textContent="自己学習データを初期化しました。";
+}
+
+function renderSelfLearning(state=null){
+  const current=state||SelfLearningAI.load();
+  const labels=SelfLearningAI.labels();
+  const evaluated=current.predictions.filter(item=>item.evaluated);
+  const pending=current.predictions.filter(item=>!item.evaluated);
+  const sortedWeights=Object.entries(current.weights||{})
+    .sort((a,b)=>b[1]-a[1]);
+  const top=sortedWeights[0]||["ensemble",.2];
+
+  let stateLabel;
+  if(current.confidence>=80)stateLabel="十分に学習";
+  else if(current.confidence>=55)stateLabel="学習中";
+  else if(current.confidence>0)stateLabel="初期学習";
+  else stateLabel="未学習";
+
+  $("selfLearningHero").innerHTML=`
+    <div class="selflearning-score">${current.confidence.toFixed(0)}点</div>
+    <div class="selflearning-state">AI信頼度・${stateLabel}</div>
+    <div class="small" style="margin-top:8px">
+      実績照合済み ${evaluated.length}件 ／ 未到来 ${pending.length}件
+    </div>`;
+
+  $("selfLearningConfidenceBar").innerHTML=`
+    <div class="scorebar">
+      <span style="width:${current.confidence}%"></span>
+    </div>`;
+
+  $("selfLearningSummary").textContent=evaluated.length
+    ?`現在最も重視しているモデル：
+${labels[top[0]]||top[0]}
+重み ${(top[1]*100).toFixed(1)}%
+
+最近の予測成績を強く反映し、相場局面と予測期間に応じて実効重みを変化させます。`
+    :"まだ実績照合済み予測がありません。将来予測を保存し、予測期間経過後に最新CSVで照合してください。";
+
+  $("selfLearningWeights").innerHTML=sortedWeights.map(
+    ([id,weight])=>`
+      <div class="weight-row">
+        <span>${labels[id]||id}</span>
+        <div class="weight-bar">
+          <span style="width:${weight*100}%"></span>
+        </div>
+        <strong>${(weight*100).toFixed(1)}%</strong>
+      </div>`
+  ).join("");
+
+  const stats=Object.values(current.modelStats||{})
+    .sort((a,b)=>a.mape-b.mape);
+
+  $("selfLearningModelTable").innerHTML=stats.length
+    ?`<div class="tablewrap"><table>
+      <thead>
+        <tr>
+          <th>モデル</th>
+          <th>件数</th>
+          <th>MAPE</th>
+          <th>方向的中</th>
+          <th>区間カバー</th>
+          <th>偏り</th>
+        </tr>
+      </thead>
+      <tbody>${stats.map(stat=>`
+        <tr>
+          <td>${stat.label}</td>
+          <td>${stat.count}</td>
+          <td>${stat.mape.toFixed(2)}%</td>
+          <td>${stat.directionHit.toFixed(1)}%</td>
+          <td>${stat.intervalCoverage.toFixed(1)}%</td>
+          <td>${stat.bias>=0?"+":""}${stat.bias.toFixed(2)}%</td>
+        </tr>`).join("")}
+      </tbody>
+    </table></div>`
+    :'<div class="small">モデル成績はまだありません。</div>';
+
+  const regimeRows=Object.entries(current.byRegime||{});
+  $("selfLearningRegimeTable").innerHTML=regimeRows.length
+    ?`<div class="tablewrap"><table>
+      <thead><tr><th>相場局面</th><th>件数</th><th>最優秀モデル</th><th>重み</th></tr></thead>
+      <tbody>${regimeRows.map(([regime,data])=>{
+        const best=Object.entries(data.weights)
+          .sort((a,b)=>b[1]-a[1])[0];
+        return `<tr>
+          <td>${regimeLabel(regime)}</td>
+          <td>${data.count}</td>
+          <td>${labels[best[0]]||best[0]}</td>
+          <td>${(best[1]*100).toFixed(1)}%</td>
+        </tr>`;
+      }).join("")}</tbody>
+    </table></div>`
+    :'<div class="small">局面別学習データはまだありません。</div>';
+
+  const horizonRows=Object.entries(current.byHorizon||{});
+  $("selfLearningHorizonTable").innerHTML=horizonRows.length
+    ?`<div class="tablewrap"><table>
+      <thead><tr><th>予測期間</th><th>件数</th><th>最優秀モデル</th><th>重み</th></tr></thead>
+      <tbody>${horizonRows.map(([horizon,data])=>{
+        const best=Object.entries(data.weights)
+          .sort((a,b)=>b[1]-a[1])[0];
+        return `<tr>
+          <td>${horizon}営業日</td>
+          <td>${data.count}</td>
+          <td>${labels[best[0]]||best[0]}</td>
+          <td>${(best[1]*100).toFixed(1)}%</td>
+        </tr>`;
+      }).join("")}</tbody>
+    </table></div>`
+    :'<div class="small">期間別学習データはまだありません。</div>';
+
+  $("selfLearningHistory").innerHTML=current.predictions.length
+    ?current.predictions.map(item=>`
+      <div class="learning-history-item">
+        <div class="learning-history-head">
+          <span>${item.originDate} → ${item.horizon}営業日後</span>
+          <span>${item.evaluated?"照合済み":"未到来"}</span>
+        </div>
+        <div class="prediction-meta">
+          選択モデル：${labels[item.selectedModel]||item.selectedModel}<br>
+          中心予測：${Math.round(item.integratedCenter).toLocaleString()}円<br>
+          ${item.evaluated
+            ?`実績：${Math.round(item.actualNav).toLocaleString()}円（${item.actualDate}）`
+            :"予測期間経過後に最新CSVで照合できます。"}
+        </div>
+      </div>`).join("")
+    :'<div class="small">保存済み予測はありません。</div>';
+}
+
 document.querySelectorAll(".tab").forEach(button=>{
   button.onclick=()=>{
     document.querySelectorAll(".tab").forEach(item=>item.classList.remove("active"));
@@ -6384,7 +6947,7 @@ document.querySelectorAll(".tab").forEach(button=>{
     $(button.dataset.page).hidden=false;
   };
 });
-$("distFile").onchange=e=>load(e.target,"dist");$("growthFile").onchange=e=>load(e.target,"growth");$("analyze").onclick=analyze;$("runBacktest").onclick=runForecastValidation;$("runRegime").onclick=runRegimeAnalysis;$("runAdvisor").onclick=runIntegratedAdvisor;$("savePrediction").onclick=saveCurrentPrediction;$("evaluatePredictions").onclick=evaluateSavedPredictions;$("clearLearning").onclick=clearLearningData;$("runAccuracyMeasurement").onclick=runAccuracyMeasurement;$("runStatisticalEngine").onclick=runStatisticalForecast;$("runAdaptiveAI").onclick=runAdaptiveAI;$("resetAdaptiveAI").onclick=resetAdaptiveAI;$("runAutoMode").onclick=runAutoModeDiagnosis;$("loadAutoData").onclick=()=>loadAutomaticCsv();$("analyzeAutoData").onclick=analyzeAutomaticCsv;$("renderFutureChart").onclick=renderFutureNavChart;$("runMonte").onclick=runMonte;$("compareMonte").onclick=compareMonteMethods;$("calcFire").onclick=calcFire;$("calcStress").onclick=renderStress;$("analyzeMarket").onclick=()=>{analyzeMarketEnvironment();if(last.d){renderOutlook();buildMorningBrief()}};$("recalcOutlook").onclick=renderOutlook;$("saveSnapshot").onclick=saveSnapshot;$("clearHistory").onclick=clearHistory;$("whatWouldIDo").onclick=buildWhatWouldIDo;$("saveMemo").onclick=saveDailyMemo;$("clearMemo").onclick=clearDailyMemo;$("download").onclick=download;
+$("distFile").onchange=e=>load(e.target,"dist");$("growthFile").onchange=e=>load(e.target,"growth");$("analyze").onclick=analyze;$("runBacktest").onclick=runForecastValidation;$("runRegime").onclick=runRegimeAnalysis;$("runAdvisor").onclick=runIntegratedAdvisor;$("savePrediction").onclick=saveCurrentPrediction;$("evaluatePredictions").onclick=evaluateSavedPredictions;$("clearLearning").onclick=clearLearningData;$("runAccuracyMeasurement").onclick=runAccuracyMeasurement;$("runStatisticalEngine").onclick=runStatisticalForecast;$("runAdaptiveAI").onclick=runAdaptiveAI;$("resetAdaptiveAI").onclick=resetAdaptiveAI;$("runAutoMode").onclick=runAutoModeDiagnosis;$("loadAutoData").onclick=()=>loadAutomaticCsv();$("analyzeAutoData").onclick=analyzeAutomaticCsv;$("renderFutureChart").onclick=renderFutureNavChart;$("saveLearningPrediction").onclick=saveCurrentLearningPrediction;$("evaluateLearningPredictions").onclick=evaluateSelfLearningPredictions;$("resetSelfLearning").onclick=resetSelfLearningData;$("runMonte").onclick=runMonte;$("compareMonte").onclick=compareMonteMethods;$("calcFire").onclick=calcFire;$("calcStress").onclick=renderStress;$("analyzeMarket").onclick=()=>{analyzeMarketEnvironment();if(last.d){renderOutlook();buildMorningBrief()}};$("recalcOutlook").onclick=renderOutlook;$("saveSnapshot").onclick=saveSnapshot;$("clearHistory").onclick=clearHistory;$("whatWouldIDo").onclick=buildWhatWouldIDo;$("saveMemo").onclick=saveDailyMemo;$("clearMemo").onclick=clearDailyMemo;$("download").onclick=download;
 $("taxMode").onchange=e=>$("taxRate").disabled=e.target.value==="before";
 try{const s=JSON.parse(localStorage.getItem("wcm5")||"{}");if(s.start)$("startDate").value=s.start;if(s.initial!=null)$("initial").value=s.initial;if(s.monthly!=null)$("monthly").value=s.monthly;if(s.day)$("day").value=s.day;if(s.taxMode)$("taxMode").value=s.taxMode;if(s.taxRate)$("taxRate").value=s.taxRate}catch(_){}
 if("serviceWorker"in navigator)navigator.serviceWorker.register("./sw.js").catch(()=>{});
@@ -6400,3 +6963,5 @@ renderLearningSystem();
 renderAdaptiveAI();
 
 loadAutomaticCsv({silent:true});
+
+renderSelfLearning();

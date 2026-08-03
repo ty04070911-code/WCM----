@@ -415,3 +415,35 @@ textarea{
 .scenario-positive{color:#86efac}
 .scenario-neutral{color:#bfdbfe}
 .scenario-negative{color:#fca5a5}
+
+
+/* Ver.24 Self Learning AI */
+.selflearning-hero{
+  background:
+    radial-gradient(circle at top right,rgba(34,197,94,.18),transparent 40%),
+    var(--panel);
+}
+.selflearning-score{
+  font-size:54px;
+  font-weight:950;
+  line-height:1;
+  letter-spacing:-2px;
+}
+.selflearning-state{
+  margin-top:8px;
+  font-size:22px;
+  font-weight:900;
+}
+.learning-history-item{
+  background:#17243a;
+  border:1px solid var(--line);
+  border-radius:14px;
+  padding:13px;
+  margin-bottom:10px;
+}
+.learning-history-head{
+  display:flex;
+  justify-content:space-between;
+  gap:10px;
+  font-weight:900;
+}
