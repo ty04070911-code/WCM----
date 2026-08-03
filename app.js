@@ -1,5 +1,5 @@
 "use strict";
-const APP_VERSION="15.0";
+const APP_VERSION="16.0";
 
 /* =========================================================
    Ver.12 Integrated Professional Monte Carlo Engine
@@ -3527,13 +3527,34 @@ function buildAdvisorMonte(horizon,runs){
     ?(medianMax-medianMin)/medianAverage*100
     :0;
 
+  const learnedWeights=LearningSystem.getModelWeights();
+
+  function weightedMetric(selector){
+    if(!learnedWeights){
+      return mean(results.map(selector));
+    }
+
+    let numerator=0;
+    let denominator=0;
+
+    for(const result of results){
+      const weight=learnedWeights[result.config.method]||0;
+      numerator+=selector(result)*weight;
+      denominator+=weight;
+    }
+
+    return denominator
+      ?numerator/denominator
+      :mean(results.map(selector));
+  }
+
   const averageSummary={
-    p05:mean(results.map(result=>result.summary.p05)),
-    median:medianAverage,
-    p95:mean(results.map(result=>result.summary.p95)),
-    lossProbability:mean(results.map(result=>result.summary.lossProbability)),
-    medianMaxDrawdown:mean(results.map(result=>result.summary.medianMaxDrawdown)),
-    expectedMedianReturn:mean(results.map(result=>result.summary.expectedMedianReturn))
+    p05:weightedMetric(result=>result.summary.p05),
+    median:weightedMetric(result=>result.summary.median),
+    p95:weightedMetric(result=>result.summary.p95),
+    lossProbability:weightedMetric(result=>result.summary.lossProbability),
+    medianMaxDrawdown:weightedMetric(result=>result.summary.medianMaxDrawdown),
+    expectedMedianReturn:weightedMetric(result=>result.summary.expectedMedianReturn)
   };
 
   return {
@@ -3803,6 +3824,494 @@ ${monteResult.modelSpread.toFixed(1)}%
   $("advisorRiskComment").textContent=riskText;
 }
 
+
+/* =========================================================
+   Ver.16 Persistent Learning System
+   ========================================================= */
+
+const LearningSystem=(()=>{
+  const STORAGE_KEY="wcm16-learning-v1";
+  const MAX_PREDICTIONS=100;
+
+  function loadState(){
+    try{
+      const parsed=JSON.parse(localStorage.getItem(STORAGE_KEY)||"null");
+      if(parsed&&Array.isArray(parsed.predictions)){
+        return parsed;
+      }
+    }catch(error){
+      console.warn("学習データの読込に失敗しました。",error);
+    }
+
+    return {
+      version:1,
+      predictions:[],
+      modelStats:{}
+    };
+  }
+
+  function saveState(state){
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        ...state,
+        predictions:state.predictions.slice(0,MAX_PREDICTIONS)
+      })
+    );
+  }
+
+  function clear(){
+    localStorage.removeItem(STORAGE_KEY);
+  }
+
+  function createPrediction(advisorResult,rows){
+    if(!advisorResult)throw new Error("先に総合判断を実行してください。");
+
+    const latestRow=rows.at(-1);
+    const targetIndex=Math.min(
+      rows.length-1,
+      rows.length-1+advisorResult.horizon
+    );
+
+    const modelPredictions=advisorResult.monteResult.results.map(item=>({
+      id:item.config.method,
+      label:MonteCarloEngine.methodLabel(item.config),
+      predicted:item.summary.median,
+      p05:item.summary.p05,
+      p95:item.summary.p95
+    }));
+
+    return {
+      id:`prediction-${Date.now()}-${Math.random().toString(36).slice(2,8)}`,
+      createdAt:new Date().toISOString(),
+      originDate:latestRow.dateText,
+      originDateValue:latestRow.date instanceof Date
+        ?latestRow.date.toISOString()
+        :latestRow.date,
+      originNav:latestRow.nav,
+      horizon:advisorResult.horizon,
+      targetDate:null,
+      advisorScore:advisorResult.advisor.score,
+      advisorGrade:advisorResult.advisor.grade,
+      advisorAction:advisorResult.advisor.action.label,
+      confidence:advisorResult.advisor.confidence,
+      regime:advisorResult.regimeResult.classification.regime,
+      integratedPrediction:advisorResult.monteResult.summary.median,
+      integratedLow:advisorResult.monteResult.summary.p05,
+      integratedHigh:advisorResult.monteResult.summary.p95,
+      modelPredictions,
+      evaluated:false,
+      actualNav:null,
+      actualDate:null,
+      integratedErrorPct:null,
+      directionCorrect:null
+    };
+  }
+
+  function findOriginIndex(rows,prediction){
+    return rows.findIndex(row=>{
+      if(row.dateText===prediction.originDate)return true;
+      const dateValue=row.date instanceof Date
+        ?row.date.toISOString()
+        :String(row.date||"");
+      return dateValue===prediction.originDateValue;
+    });
+  }
+
+  function evaluatePrediction(prediction,rows){
+    if(prediction.evaluated)return prediction;
+
+    const originIndex=findOriginIndex(rows,prediction);
+    if(originIndex<0)return prediction;
+
+    const targetIndex=originIndex+prediction.horizon;
+    if(targetIndex>=rows.length)return prediction;
+
+    const actualRow=rows[targetIndex];
+    const actualNav=actualRow.nav;
+    const actualDirection=Math.sign(actualNav-prediction.originNav);
+    const predictedDirection=Math.sign(
+      prediction.integratedPrediction-prediction.originNav
+    );
+
+    const modelResults=prediction.modelPredictions.map(model=>{
+      const errorPct=Math.abs(model.predicted-actualNav)/actualNav*100;
+      const signedErrorPct=(model.predicted-actualNav)/actualNav*100;
+      const directionCorrect=
+        Math.sign(model.predicted-prediction.originNav)===actualDirection;
+      const intervalHit=
+        actualNav>=model.p05&&actualNav<=model.p95;
+
+      return {
+        ...model,
+        errorPct,
+        signedErrorPct,
+        directionCorrect,
+        intervalHit
+      };
+    });
+
+    return {
+      ...prediction,
+      evaluated:true,
+      actualNav,
+      actualDate:actualRow.dateText,
+      targetDate:actualRow.dateText,
+      integratedErrorPct:
+        Math.abs(prediction.integratedPrediction-actualNav)/actualNav*100,
+      integratedSignedErrorPct:
+        (prediction.integratedPrediction-actualNav)/actualNav*100,
+      directionCorrect:predictedDirection===actualDirection,
+      intervalHit:
+        actualNav>=prediction.integratedLow&&
+        actualNav<=prediction.integratedHigh,
+      modelResults
+    };
+  }
+
+  function aggregateModelStats(predictions){
+    const evaluated=predictions.filter(item=>item.evaluated);
+    const grouped={};
+
+    for(const prediction of evaluated){
+      for(const model of prediction.modelResults||[]){
+        if(!grouped[model.id]){
+          grouped[model.id]={
+            id:model.id,
+            label:model.label,
+            count:0,
+            errors:[],
+            signedErrors:[],
+            directionHits:0,
+            intervalHits:0
+          };
+        }
+
+        const group=grouped[model.id];
+        group.count+=1;
+        group.errors.push(model.errorPct);
+        group.signedErrors.push(model.signedErrorPct);
+        if(model.directionCorrect)group.directionHits+=1;
+        if(model.intervalHit)group.intervalHits+=1;
+      }
+    }
+
+    const stats=Object.values(grouped).map(group=>{
+      const mape=mean(group.errors);
+      const bias=mean(group.signedErrors);
+      const directionHit=group.count
+        ?group.directionHits/group.count*100
+        :0;
+      const intervalCoverage=group.count
+        ?group.intervalHits/group.count*100
+        :0;
+
+      const score=clamp(
+        (100-mape*5)*.50+
+        directionHit*.30+
+        (100-Math.abs(bias)*6)*.10+
+        intervalCoverage*.10,
+        0,
+        100
+      );
+
+      return {
+        id:group.id,
+        label:group.label,
+        count:group.count,
+        mape,
+        bias,
+        directionHit,
+        intervalCoverage,
+        score
+      };
+    });
+
+    const rawWeights=stats.map(stat=>
+      1/Math.max(stat.mape,.5)**2
+    );
+    const total=rawWeights.reduce((sum,value)=>sum+value,0)||1;
+
+    return stats
+      .map((stat,index)=>({
+        ...stat,
+        weight:rawWeights[index]/total
+      }))
+      .sort((left,right)=>right.score-left.score);
+  }
+
+  function evaluateAll(rows){
+    const state=loadState();
+    const predictions=state.predictions.map(item=>
+      evaluatePrediction(item,rows)
+    );
+    const modelStats=aggregateModelStats(predictions);
+
+    const next={
+      ...state,
+      predictions,
+      modelStats:Object.fromEntries(
+        modelStats.map(stat=>[stat.id,stat])
+      )
+    };
+
+    saveState(next);
+    return next;
+  }
+
+  function addPrediction(prediction){
+    const state=loadState();
+    state.predictions.unshift(prediction);
+    state.predictions=state.predictions.slice(0,MAX_PREDICTIONS);
+    saveState(state);
+    return state;
+  }
+
+  function getModelWeights(){
+    const state=loadState();
+    const stats=Object.values(state.modelStats||{});
+    if(!stats.length)return null;
+
+    const total=stats.reduce((sum,stat)=>sum+(stat.weight||0),0)||1;
+    return Object.fromEntries(
+      stats.map(stat=>[stat.id,(stat.weight||0)/total])
+    );
+  }
+
+  function summary(state){
+    const evaluated=state.predictions.filter(item=>item.evaluated);
+    const pending=state.predictions.filter(item=>!item.evaluated);
+    const integratedMape=evaluated.length
+      ?mean(evaluated.map(item=>item.integratedErrorPct))
+      :0;
+    const directionHit=evaluated.length
+      ?evaluated.filter(item=>item.directionCorrect).length/
+        evaluated.length*100
+      :0;
+    const intervalCoverage=evaluated.length
+      ?evaluated.filter(item=>item.intervalHit).length/
+        evaluated.length*100
+      :0;
+
+    return {
+      total:state.predictions.length,
+      evaluated:evaluated.length,
+      pending:pending.length,
+      integratedMape,
+      directionHit,
+      intervalCoverage,
+      modelStats:Object.values(state.modelStats||{})
+        .sort((a,b)=>b.score-a.score)
+    };
+  }
+
+  return Object.freeze({
+    loadState,
+    saveState,
+    clear,
+    createPrediction,
+    addPrediction,
+    evaluateAll,
+    getModelWeights,
+    summary
+  });
+})();
+
+function saveCurrentPrediction(){
+  const status=$("learningStatus");
+
+  try{
+    if(!last.advisor){
+      throw new Error("先に「総合判断」を実行してください。");
+    }
+
+    const prediction=LearningSystem.createPrediction(
+      last.advisor,
+      last.d
+    );
+
+    const state=LearningSystem.addPrediction(prediction);
+    renderLearningSystem(state);
+
+    status.className="status ok";
+    status.textContent="現在の予測を保存しました。CSV更新後に実績照合できます。";
+  }catch(error){
+    status.className="status bad";
+    status.textContent=`保存エラー：${error.message}`;
+  }
+}
+
+function evaluateSavedPredictions(){
+  const status=$("learningStatus");
+
+  if(!last.d){
+    status.className="status bad";
+    status.textContent="先にCSVを読み込み、「分析を開始」を押してください。";
+    return;
+  }
+
+  try{
+    const before=LearningSystem.summary(
+      LearningSystem.loadState()
+    );
+    const state=LearningSystem.evaluateAll(last.d);
+    const after=LearningSystem.summary(state);
+    const newlyEvaluated=after.evaluated-before.evaluated;
+
+    renderLearningSystem(state);
+
+    status.className="status ok";
+    status.textContent=newlyEvaluated>0
+      ?`${newlyEvaluated}件の予測を新しく実績照合しました。`
+      :"照合可能な新しい予測はありませんでした。";
+  }catch(error){
+    console.error(error);
+    status.className="status bad";
+    status.textContent=`実績照合エラー：${error.message}`;
+  }
+}
+
+function clearLearningData(){
+  if(!confirm("予測履歴と学習データをすべて消去しますか？")){
+    return;
+  }
+
+  LearningSystem.clear();
+  renderLearningSystem(LearningSystem.loadState());
+
+  $("learningStatus").className="status";
+  $("learningStatus").textContent="学習データを消去しました。";
+}
+
+function learningClass(score){
+  if(score>=75)return "learning-good";
+  if(score>=55)return "learning-mid";
+  return "learning-bad";
+}
+
+function renderLearningSystem(state=null){
+  const currentState=state||LearningSystem.loadState();
+  const summary=LearningSystem.summary(currentState);
+  const best=summary.modelStats[0];
+
+  $("learningCards").innerHTML=`
+    <div class="card">
+      <div class="card-title">保存予測</div>
+      <div class="card-value">${summary.total}</div>
+    </div>
+    <div class="card">
+      <div class="card-title">実績照合済み</div>
+      <div class="card-value">${summary.evaluated}</div>
+    </div>
+    <div class="card">
+      <div class="card-title">未到来</div>
+      <div class="card-value">${summary.pending}</div>
+    </div>
+    <div class="card">
+      <div class="card-title">統合予測MAPE</div>
+      <div class="card-value">${summary.evaluated?summary.integratedMape.toFixed(2):"—"}${summary.evaluated?"%":""}</div>
+    </div>`;
+
+  $("learningComment").textContent=summary.evaluated
+    ?`学習結果
+
+統合予測の方向的中率：
+${summary.directionHit.toFixed(1)}%
+
+予測区間カバー率：
+${summary.intervalCoverage.toFixed(1)}%
+
+現在の最優秀モデル：
+${best?.label||"判定不能"}
+信頼度 ${best?.score.toFixed(0)||"0"}点
+
+照合件数が少ない間は、学習済み重みを強く信頼しすぎないでください。`
+    :"まだ実績照合済みの予測がありません。総合判断を保存し、予測期間が経過した後にCSVを更新して実績照合してください。";
+
+  $("learningTable").innerHTML=summary.modelStats.length
+    ?`<div class="tablewrap">
+      <table>
+        <thead>
+          <tr>
+            <th>モデル</th>
+            <th>件数</th>
+            <th>信頼度</th>
+            <th>MAPE</th>
+            <th>方向的中</th>
+            <th>区間カバー</th>
+            <th>偏り</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${summary.modelStats.map(stat=>`
+            <tr>
+              <td>${stat.label}</td>
+              <td>${stat.count}</td>
+              <td class="${learningClass(stat.score)}">${stat.score.toFixed(0)}点</td>
+              <td>${stat.mape.toFixed(2)}%</td>
+              <td>${stat.directionHit.toFixed(1)}%</td>
+              <td>${stat.intervalCoverage.toFixed(1)}%</td>
+              <td>${stat.bias>=0?"+":""}${stat.bias.toFixed(2)}%</td>
+            </tr>`).join("")}
+        </tbody>
+      </table>
+    </div>`
+    :'<div class="small">モデル成績はまだありません。</div>';
+
+  $("learningWeights").innerHTML=summary.modelStats.map(stat=>`
+    <div class="weight-row">
+      <span>${stat.label}</span>
+      <div class="weight-bar">
+        <span style="width:${(stat.weight||0)*100}%"></span>
+      </div>
+      <strong>${((stat.weight||0)*100).toFixed(1)}%</strong>
+    </div>`).join("");
+
+  $("predictionHistory").innerHTML=currentState.predictions.length
+    ?currentState.predictions.map(item=>`
+      <div class="prediction-item">
+        <div class="prediction-head">
+          <span>${item.originDate} → ${item.horizon}営業日後</span>
+          <span>${item.evaluated?"照合済み":"未到来"}</span>
+        </div>
+        <div class="prediction-meta">
+          総合予測：${Math.round(item.integratedPrediction).toLocaleString()}円<br>
+          判断：${item.advisorAction}・スコア ${item.advisorScore.toFixed(0)}点<br>
+          ${item.evaluated
+            ?`実績：${Math.round(item.actualNav).toLocaleString()}円（${item.actualDate}）<br>
+              誤差：${item.integratedErrorPct.toFixed(2)}%・方向 ${item.directionCorrect?"的中":"不的中"}`
+            :"予測期間の実績データがCSVへ追加されると照合できます。"}
+        </div>
+      </div>`).join("")
+    :'<div class="small">保存済み予測はありません。</div>';
+
+  let report;
+
+  if(!summary.evaluated){
+    report="まだ学習結果はありません。予測を保存し、期間経過後にCSVを更新して実績照合を行ってください。";
+  }else{
+    const worst=summary.modelStats.at(-1);
+    report=`AI学習レポート
+
+最も成績が良いモデル：
+${best.label}
+MAPE ${best.mape.toFixed(2)}%
+方向的中率 ${best.directionHit.toFixed(1)}%
+
+最も成績が低いモデル：
+${worst.label}
+MAPE ${worst.mape.toFixed(2)}%
+
+統合予測：
+MAPE ${summary.integratedMape.toFixed(2)}%
+方向的中率 ${summary.directionHit.toFixed(1)}%
+
+今後は、成績の良いモデルへ大きな重みを付ける参考データとして使用します。相場局面が変わると過去の優秀モデルが機能しなくなる場合があります。`;
+  }
+
+  $("learningReport").textContent=report;
+}
+
 document.querySelectorAll(".tab").forEach(button=>{
   button.onclick=()=>{
     document.querySelectorAll(".tab").forEach(item=>item.classList.remove("active"));
@@ -3811,8 +4320,15 @@ document.querySelectorAll(".tab").forEach(button=>{
     $(button.dataset.page).hidden=false;
   };
 });
-$("distFile").onchange=e=>load(e.target,"dist");$("growthFile").onchange=e=>load(e.target,"growth");$("analyze").onclick=analyze;$("runBacktest").onclick=runForecastValidation;$("runRegime").onclick=runRegimeAnalysis;$("runAdvisor").onclick=runIntegratedAdvisor;$("runMonte").onclick=runMonte;$("compareMonte").onclick=compareMonteMethods;$("calcFire").onclick=calcFire;$("calcStress").onclick=renderStress;$("analyzeMarket").onclick=()=>{analyzeMarketEnvironment();if(last.d){renderOutlook();buildMorningBrief()}};$("recalcOutlook").onclick=renderOutlook;$("saveSnapshot").onclick=saveSnapshot;$("clearHistory").onclick=clearHistory;$("whatWouldIDo").onclick=buildWhatWouldIDo;$("saveMemo").onclick=saveDailyMemo;$("clearMemo").onclick=clearDailyMemo;$("download").onclick=download;
+$("distFile").onchange=e=>load(e.target,"dist");$("growthFile").onchange=e=>load(e.target,"growth");$("analyze").onclick=analyze;$("runBacktest").onclick=runForecastValidation;$("runRegime").onclick=runRegimeAnalysis;$("runAdvisor").onclick=runIntegratedAdvisor;$("savePrediction").onclick=saveCurrentPrediction;$("evaluatePredictions").onclick=evaluateSavedPredictions;$("clearLearning").onclick=clearLearningData;$("runMonte").onclick=runMonte;$("compareMonte").onclick=compareMonteMethods;$("calcFire").onclick=calcFire;$("calcStress").onclick=renderStress;$("analyzeMarket").onclick=()=>{analyzeMarketEnvironment();if(last.d){renderOutlook();buildMorningBrief()}};$("recalcOutlook").onclick=renderOutlook;$("saveSnapshot").onclick=saveSnapshot;$("clearHistory").onclick=clearHistory;$("whatWouldIDo").onclick=buildWhatWouldIDo;$("saveMemo").onclick=saveDailyMemo;$("clearMemo").onclick=clearDailyMemo;$("download").onclick=download;
 $("taxMode").onchange=e=>$("taxRate").disabled=e.target.value==="before";
 try{const s=JSON.parse(localStorage.getItem("wcm5")||"{}");if(s.start)$("startDate").value=s.start;if(s.initial!=null)$("initial").value=s.initial;if(s.monthly!=null)$("monthly").value=s.monthly;if(s.day)$("day").value=s.day;if(s.taxMode)$("taxMode").value=s.taxMode;if(s.taxRate)$("taxRate").value=s.taxRate}catch(_){}
 if("serviceWorker"in navigator)navigator.serviceWorker.register("./sw.js").catch(()=>{});
 restoreMarketInputs();
+
+restoreOutlookSettings();
+renderHistory();
+
+restoreDailyMemo();
+
+renderLearningSystem();
