@@ -1,5 +1,5 @@
 "use strict";
-const APP_VERSION="24.1";
+const APP_VERSION="25.0";
 
 /* =========================================================
    Ver.12 Integrated Professional Monte Carlo Engine
@@ -7016,6 +7016,670 @@ ${labels[top[0]]||top[0]}
     :'<div class="small">保存済み予測はありません。</div>';
 }
 
+
+/* =========================================================
+   Ver.25 Integrated Investment Dashboard
+   ========================================================= */
+
+const V25DashboardEngine=(()=>{
+  const MODEL_LABELS={
+    garch:"GARCH風",
+    "student-t":"t分布",
+    regime:"レジーム切替",
+    ensemble:"精度加重アンサンブル",
+    baseline:"従来アンサンブル"
+  };
+
+  function getPurchasePlan(rows,initial,monthly,day){
+    return plan(rows,initial,monthly,day);
+  }
+
+  function simulateCostBasis(rows,config){
+    const initial=Math.max(0,+config.initial||0);
+    const monthly=Math.max(0,+config.monthly||0);
+    const day=clamp(Math.round(+config.day||1),1,31);
+    const taxRate=clamp(+config.taxRate||20.315,0,100)/100;
+    const distributionMode=config.distributionMode||"reinvest";
+    const purchases=getPurchasePlan(rows,initial,monthly,day);
+
+    let units=0;
+    let principal=0;
+    let costBasis=0;
+    let cashDistributions=0;
+    let ordinaryGross=0;
+    let specialGross=0;
+    let taxPaid=0;
+    const history=[];
+    const distributions=[];
+
+    for(const row of rows){
+      const purchase=purchases.get(row.dateText)||0;
+
+      if(purchase>0&&row.nav>0){
+        const newUnits=purchase/row.nav*10000;
+        units+=newUnits;
+        principal+=purchase;
+        costBasis+=purchase;
+      }
+
+      let ordinary=0;
+      let special=0;
+      let netDistribution=0;
+
+      if(row.distribution>0&&units>0&&row.nav>0){
+        const averageCostPer10000=costBasis/units*10000;
+        const specialPer10000=clamp(
+          averageCostPer10000-row.nav,
+          0,
+          row.distribution
+        );
+        const ordinaryPer10000=Math.max(
+          row.distribution-specialPer10000,
+          0
+        );
+
+        special=units*specialPer10000/10000;
+        ordinary=units*ordinaryPer10000/10000;
+        const ordinaryTax=ordinary*taxRate;
+        taxPaid+=ordinaryTax;
+        ordinaryGross+=ordinary;
+        specialGross+=special;
+        netDistribution=ordinary-ordinaryTax+special;
+
+        // 特別分配相当額は個別元本を減額する推定
+        costBasis=Math.max(costBasis-special,0);
+
+        if(distributionMode==="reinvest"&&netDistribution>0){
+          const reinvestedUnits=netDistribution/row.nav*10000;
+          units+=reinvestedUnits;
+          // 普通分配の再投資は新規取得、特別分配は元本払戻し再投資
+          costBasis+=netDistribution;
+        }else{
+          cashDistributions+=netDistribution;
+        }
+
+        distributions.push({
+          dateText:row.dateText,
+          distributionPer10000:row.distribution,
+          ordinary,
+          special,
+          tax:ordinaryTax,
+          net:netDistribution,
+          averageCostPer10000
+        });
+      }
+
+      const marketValue=units*row.nav/10000;
+      history.push({
+        dateText:row.dateText,
+        date:row.date,
+        nav:row.nav,
+        units,
+        principal,
+        costBasis,
+        marketValue,
+        cashDistributions,
+        totalValue:marketValue+cashDistributions,
+        ordinary,
+        special
+      });
+    }
+
+    const latest=history.at(-1)||{
+      principal:0,costBasis:0,marketValue:0,cashDistributions:0,totalValue:0
+    };
+
+    return {
+      history,
+      distributions,
+      latest,
+      ordinaryGross,
+      specialGross,
+      taxPaid,
+      distributionMode
+    };
+  }
+
+  function multiHorizonForecast(rows){
+    const horizons=[5,21,63,126];
+    return horizons.map(horizon=>{
+      const settings=DataAdaptiveMode.bestStatSettings(
+        rows.length,
+        {horizon,model:"auto"}
+      );
+      const result=StatisticalForecastEngine.run(rows,{
+        horizon:settings.horizon,
+        lookback:settings.lookback,
+        model:"auto",
+        interval:.90
+      });
+      const latest=rows.at(-1).nav;
+      return {
+        requestedHorizon:horizon,
+        horizon:result.horizon,
+        label:{
+          5:"1週間",
+          21:"1か月",
+          63:"3か月",
+          126:"6か月"
+        }[horizon],
+        center:result.selected.center,
+        low:result.selected.low,
+        high:result.selected.high,
+        returnRate:(result.selected.center/latest-1)*100,
+        selectedId:result.selectedId,
+        regime:result.regime,
+        diagnostics:result.diagnostics,
+        result
+      };
+    });
+  }
+
+  function modelContributions(regime,horizon){
+    let weights=null;
+    try{
+      weights=SelfLearningAI.effectiveWeights(regime,horizon);
+    }catch{}
+    if(!weights){
+      weights={
+        garch:.22,
+        "student-t":.22,
+        regime:.20,
+        ensemble:.24,
+        baseline:.12
+      };
+    }
+    const clean={};
+    for(const id of Object.keys(MODEL_LABELS)){
+      clean[id]=Math.max(weights[id]||0,0);
+    }
+    const total=Object.values(clean).reduce((a,b)=>a+b,0)||1;
+    return Object.fromEntries(
+      Object.entries(clean).map(([id,value])=>[id,value/total])
+    );
+  }
+
+  function confidenceScore(forecasts,contributions){
+    const selfState=SelfLearningAI.load();
+    const measurementScore=last.measurement?.integratedMetrics?.score||0;
+    const selfScore=selfState.confidence||0;
+    const dataScore=clamp((last.d?.length||0)/550*100,15,100);
+    const modelAgreement=(()=>{
+      const returns=forecasts.map(item=>item.returnRate);
+      const spread=Math.max(...returns)-Math.min(...returns);
+      return clamp(100-spread*4,20,100);
+    })();
+    const maxContribution=Math.max(...Object.values(contributions));
+    const diversification=clamp((1-maxContribution)/.8*100,20,100);
+
+    return clamp(
+      dataScore*.28+
+      modelAgreement*.28+
+      diversification*.14+
+      selfScore*.20+
+      measurementScore*.10,
+      0,
+      100
+    );
+  }
+
+  function decision({forecasts,confidence,riskStyle,capital}){
+    const oneWeek=forecasts.find(item=>item.requestedHorizon===5);
+    const oneMonth=forecasts.find(item=>item.requestedHorizon===21);
+    const threeMonth=forecasts.find(item=>item.requestedHorizon===63);
+    const averageReturn=mean(
+      [oneWeek,oneMonth,threeMonth]
+        .filter(Boolean)
+        .map(item=>item.returnRate)
+    );
+    const worstLow=Math.min(...forecasts.map(item=>item.low));
+    const latest=last.d.at(-1).nav;
+    const downside=(worstLow/latest-1)*100;
+    const adjustment={
+      defensive:-1.0,
+      standard:0,
+      growth:1.0
+    }[riskStyle]||0;
+
+    let id,label,className;
+    if(confidence>=68&&averageReturn>2-adjustment&&downside>-22){
+      id="buy";label="買い";className="v25-buy";
+    }else if(confidence>=48&&averageReturn>-1.5-adjustment&&downside>-32){
+      id="accumulate";label="積立";className="v25-accumulate";
+    }else if(averageReturn>-4-adjustment&&downside>-42){
+      id="wait";label="様子見";className="v25-wait";
+    }else{
+      id="caution";label="注意";className="v25-caution";
+    }
+
+    const principalGap=capital.latest.totalValue-capital.latest.principal;
+    return {
+      id,label,className,
+      averageReturn,
+      downside,
+      principalGap
+    };
+  }
+
+  function predictionActualRows(){
+    const state=SelfLearningAI.load();
+    return state.predictions
+      .filter(item=>item.evaluated&&Number.isFinite(item.actualNav))
+      .slice()
+      .reverse()
+      .map(item=>({
+        date:item.actualDate||item.originDate,
+        prediction:item.integratedCenter,
+        actual:item.actualNav,
+        errorPct:Math.abs(item.integratedCenter-item.actualNav)/item.actualNav*100,
+        model:item.selectedModel,
+        horizon:item.horizon
+      }));
+  }
+
+  function run(config){
+    if(!last.d?.length){
+      throw new Error("先にCSVを読み込み、分析を開始してください。");
+    }
+    const capital=simulateCostBasis(last.d,config);
+    const forecasts=multiHorizonForecast(last.d);
+    const reference=forecasts.find(item=>item.requestedHorizon===21)||forecasts[0];
+    const contributions=modelContributions(
+      reference.regime,
+      reference.horizon
+    );
+    const confidence=confidenceScore(forecasts,contributions);
+    const judgement=decision({
+      forecasts,
+      confidence,
+      riskStyle:config.riskStyle,
+      capital
+    });
+    const predictionActual=predictionActualRows();
+
+    return {
+      capital,
+      forecasts,
+      contributions,
+      confidence,
+      judgement,
+      predictionActual,
+      createdAt:new Date().toISOString()
+    };
+  }
+
+  return Object.freeze({
+    run,
+    labels:()=>({...MODEL_LABELS}),
+    simulateCostBasis
+  });
+})();
+
+function runV25Dashboard(){
+  const status=$("v25Status");
+  status.className="status";
+  status.textContent="積立元本・分配金・4期間予測を統合しています…";
+
+  setTimeout(()=>{
+    try{
+      const result=V25DashboardEngine.run({
+        initial:+$("initial").value||0,
+        monthly:+$("monthly").value||0,
+        day:+$("day").value||1,
+        taxRate:+$("v25DistributionTax").value||20.315,
+        distributionMode:$("v25DistributionMode").value,
+        riskStyle:$("v25RiskStyle").value
+      });
+
+      last.v25=result;
+      renderV25Dashboard(result);
+      $("exportV25Pdf").disabled=false;
+      status.className="status ok";
+      status.textContent="Ver.25総合分析が完了しました。";
+    }catch(error){
+      console.error("Ver.25総合分析エラー",error);
+      status.className="status bad";
+      status.textContent=`Ver.25総合分析エラー：${error.message}`;
+    }
+  },60);
+}
+
+function renderV25Dashboard(result){
+  const labels=V25DashboardEngine.labels();
+  const judgement=result.judgement;
+  const latest=result.capital.latest;
+
+  $("v25DecisionHero").innerHTML=`
+    <div class="v25-confidence-number">${result.confidence.toFixed(0)}点</div>
+    <div class="v25-decision ${judgement.className}">${judgement.label}</div>
+    <div class="small" style="margin-top:8px">
+      4期間平均予想 ${judgement.averageReturn>=0?"+":""}${judgement.averageReturn.toFixed(2)}%
+    </div>`;
+
+  $("v25ConfidenceMeter").innerHTML=`
+    <div class="v25-meter">
+      <span style="width:${result.confidence}%"></span>
+    </div>`;
+
+  const decisionText={
+    buy:"予測の一致度と信頼度が比較的高い状態です。ただし、一括ではなく分割購入を基本としてください。",
+    accumulate:"通常の積立を継続する判断です。価格変動を利用しながら購入単価を平準化します。",
+    wait:"方向感が弱い状態です。積立は維持しつつ、大きな追加購入は待つ判断です。",
+    caution:"下落側の予測幅が大きいため、追加投資より資金管理を優先する判断です。"
+  }[judgement.id];
+
+  $("v25DecisionComment").textContent=`参考判定：${judgement.label}
+
+AI信頼度：${result.confidence.toFixed(0)}点
+4期間平均予想：${judgement.averageReturn>=0?"+":""}${judgement.averageReturn.toFixed(2)}%
+最も厳しい予測下限：${judgement.downside.toFixed(2)}%
+評価額と積立元本の差：${yen(judgement.principalGap)}
+
+${decisionText}
+
+この判定は投資助言ではなく、過去データに基づく参考情報です。`;
+
+  $("v25HorizonCards").innerHTML=result.forecasts.map(item=>`
+    <div class="card">
+      <div class="card-title">${item.label}</div>
+      <div class="card-value">${Math.round(item.center).toLocaleString()}円</div>
+      <div class="card-sub">
+        ${item.returnRate>=0?"+":""}${item.returnRate.toFixed(2)}%<br>
+        ${Math.round(item.low).toLocaleString()}円〜${Math.round(item.high).toLocaleString()}円<br>
+        ${labels[item.selectedId]||item.selectedId}
+      </div>
+    </div>`).join("");
+
+  lineChart(
+    $("v25HorizonChart"),
+    [
+      {
+        name:"中心予測",
+        color:"#3b82f6",
+        values:result.forecasts.map(item=>item.center)
+      },
+      {
+        name:"予測上限",
+        color:"#22c55e",
+        values:result.forecasts.map(item=>item.high)
+      },
+      {
+        name:"予測下限",
+        color:"#ef4444",
+        values:result.forecasts.map(item=>item.low)
+      }
+    ]
+  );
+
+  const sortedContributions=Object.entries(result.contributions)
+    .sort((a,b)=>b[1]-a[1]);
+
+  $("v25ContributionBars").innerHTML=sortedContributions.map(([id,weight])=>`
+    <div class="v25-model-row">
+      <span>${labels[id]||id}</span>
+      <div class="v25-model-bar">
+        <span style="width:${weight*100}%"></span>
+      </div>
+      <strong>${(weight*100).toFixed(1)}%</strong>
+    </div>`).join("");
+
+  const topContribution=sortedContributions[0];
+  $("v25ContributionComment").textContent=`現在最も影響の大きいモデルは「${labels[topContribution[0]]||topContribution[0]}」で、貢献度は${(topContribution[1]*100).toFixed(1)}%です。
+
+自己学習データが増えると、局面・予測期間ごとの実績に応じて貢献度が変化します。`;
+
+  $("v25CapitalCards").innerHTML=`
+    <div class="card">
+      <div class="card-title">積立元本</div>
+      <div class="card-value">${yen(latest.principal)}</div>
+    </div>
+    <div class="card">
+      <div class="card-title">推定個別元本</div>
+      <div class="card-value">${yen(latest.costBasis)}</div>
+    </div>
+    <div class="card">
+      <div class="card-title">現在評価額</div>
+      <div class="card-value">${yen(latest.marketValue)}</div>
+    </div>
+    <div class="card">
+      <div class="card-title">現金分配金</div>
+      <div class="card-value">${yen(latest.cashDistributions)}</div>
+    </div>
+    <div class="card">
+      <div class="card-title">普通分配推定</div>
+      <div class="card-value">${yen(result.capital.ordinaryGross)}</div>
+    </div>
+    <div class="card">
+      <div class="card-title">特別分配推定</div>
+      <div class="card-value">${yen(result.capital.specialGross)}</div>
+    </div>
+    <div class="card">
+      <div class="card-title">普通分配の推定税額</div>
+      <div class="card-value">${yen(result.capital.taxPaid)}</div>
+    </div>`;
+
+  const capitalSample=result.capital.history.filter(
+    (_,index,array)=>index===array.length-1||index%Math.max(1,Math.floor(array.length/100))===0
+  );
+  lineChart(
+    $("v25CapitalChart"),
+    [
+      {
+        name:"積立元本",
+        color:"#f59e0b",
+        values:capitalSample.map(item=>item.principal)
+      },
+      {
+        name:"評価額＋現金分配",
+        color:"#3b82f6",
+        values:capitalSample.map(item=>item.totalValue)
+      },
+      {
+        name:"推定個別元本",
+        color:"#22c55e",
+        values:capitalSample.map(item=>item.costBasis)
+      }
+    ]
+  );
+
+  const distributionRows=result.capital.distributions.slice(-12).reverse();
+  $("v25DistributionTable").innerHTML=distributionRows.length
+    ?`<div class="tablewrap"><table>
+      <thead>
+        <tr>
+          <th>日付</th>
+          <th>分配金/1万口</th>
+          <th>普通分配推定</th>
+          <th>特別分配推定</th>
+          <th>税額推定</th>
+        </tr>
+      </thead>
+      <tbody>${distributionRows.map(item=>`
+        <tr>
+          <td>${item.dateText}</td>
+          <td>${item.distributionPer10000.toLocaleString()}円</td>
+          <td class="v25-tax-normal">${yen(item.ordinary)}</td>
+          <td class="v25-tax-special">${yen(item.special)}</td>
+          <td>${yen(item.tax)}</td>
+        </tr>`).join("")}</tbody>
+    </table></div>`
+    :'<div class="small">分配実績がありません。</div>';
+
+  $("v25DistributionNote").textContent=`普通分配・特別分配の区分は、各分配日の基準価額と推定平均取得価額を比較した概算です。
+
+実際の税務上の個別元本・普通分配・元本払戻金は、証券会社の取引報告書や税務資料で確認してください。
+
+積立日は入力欄の「積立日」を使い、その日が休業日の場合はCSV上で同月の次の営業日、無ければ月末営業日に購入したものとして計算しています。`;
+
+  renderV25ForecastActual(result.predictionActual);
+
+  $("v25Report").textContent=`WCM Analyzer Pro Ver.25 総合分析
+
+作成日時：
+${new Date(result.createdAt).toLocaleString("ja-JP")}
+
+参考判断：
+${judgement.label}
+
+AI信頼度：
+${result.confidence.toFixed(0)}点
+
+積立元本：
+${yen(latest.principal)}
+
+現在評価額：
+${yen(latest.marketValue)}
+
+評価額と元本の差：
+${yen(latest.marketValue-latest.principal)}
+
+普通分配推定累計：
+${yen(result.capital.ordinaryGross)}
+
+特別分配推定累計：
+${yen(result.capital.specialGross)}
+
+推定税額：
+${yen(result.capital.taxPaid)}
+
+4期間平均予想：
+${judgement.averageReturn>=0?"+":""}${judgement.averageReturn.toFixed(2)}%
+
+過去予測の実績照合件数：
+${result.predictionActual.length}件
+
+本レポートは過去データを用いた参考分析で、将来の運用成果や税務上の取扱いを保証しません。`;
+}
+
+function renderV25ForecastActual(rows){
+  const chart=$("v25ForecastActualChart");
+  const table=$("v25ForecastActualTable");
+
+  if(!rows.length){
+    chart.innerHTML='<div class="small">実績照合済みの予測がまだありません。</div>';
+    table.innerHTML="";
+    return;
+  }
+
+  const recent=rows.slice(-30);
+  lineChart(
+    chart,
+    [
+      {
+        name:"予測値",
+        color:"#3b82f6",
+        values:recent.map(item=>item.prediction)
+      },
+      {
+        name:"実績値",
+        color:"#22c55e",
+        values:recent.map(item=>item.actual)
+      }
+    ]
+  );
+
+  table.innerHTML=`<div class="tablewrap"><table>
+    <thead>
+      <tr>
+        <th>実績日</th>
+        <th>期間</th>
+        <th>予測</th>
+        <th>実績</th>
+        <th>誤差</th>
+      </tr>
+    </thead>
+    <tbody>${recent.slice().reverse().map(item=>`
+      <tr>
+        <td>${item.date}</td>
+        <td>${item.horizon}営業日</td>
+        <td>${Math.round(item.prediction).toLocaleString()}円</td>
+        <td>${Math.round(item.actual).toLocaleString()}円</td>
+        <td>${item.errorPct.toFixed(2)}%</td>
+      </tr>`).join("")}</tbody>
+  </table></div>`;
+}
+
+function exportV25ReportPdf(){
+  if(!last.v25){
+    $("v25Status").className="status bad";
+    $("v25Status").textContent="先にVer.25総合分析を実行してください。";
+    return;
+  }
+
+  const reportWindow=window.open("","_blank");
+  if(!reportWindow){
+    $("v25Status").className="status bad";
+    $("v25Status").textContent="PDF画面を開けませんでした。Safariのポップアップ設定を確認してください。";
+    return;
+  }
+
+  const sections=[
+    ["AI信頼度と投資判断","v25DecisionHero","v25ConfidenceMeter","v25DecisionComment"],
+    ["4期間の予測","v25HorizonCards","v25HorizonChart"],
+    ["モデルごとの貢献度","v25ContributionBars","v25ContributionComment"],
+    ["積立元本・評価額・分配金","v25CapitalCards","v25CapitalChart","v25DistributionTable","v25DistributionNote"],
+    ["過去予測と実績の比較","v25ForecastActualChart","v25ForecastActualTable"],
+    ["Ver.25総合レポート","v25Report"]
+  ];
+
+  const body=sections.map(([title,...ids])=>`
+    <section>
+      <h2>${title}</h2>
+      ${ids.map(id=>{
+        const element=$(id);
+        return element?element.outerHTML:"";
+      }).join("")}
+    </section>`).join("");
+
+  reportWindow.document.open();
+  reportWindow.document.write(`<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width">
+<title>WCM Analyzer Pro Ver.25 分析レポート</title>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue","Noto Sans JP",sans-serif;margin:24px;color:#172033;background:#fff}
+  h1{font-size:26px;margin-bottom:4px}
+  h2{font-size:20px;border-bottom:2px solid #2563eb;padding-bottom:7px;margin-top:28px}
+  section{break-inside:avoid;margin-bottom:24px}
+  .cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+  .card,.comment{border:1px solid #cbd5e1;border-radius:10px;padding:12px;margin:6px 0;white-space:pre-wrap}
+  .card-title,.small,.card-sub{font-size:12px;color:#64748b}
+  .card-value{font-size:20px;font-weight:800}
+  .tablewrap{overflow:visible}
+  table{width:100%;border-collapse:collapse;font-size:11px}
+  th,td{border:1px solid #cbd5e1;padding:6px;text-align:right}
+  th:first-child,td:first-child{text-align:left}
+  svg{max-width:100%;height:auto}
+  .v25-meter,.v25-model-bar{background:#e2e8f0;border-radius:999px;overflow:hidden}
+  .v25-meter{height:16px}
+  .v25-model-bar{height:10px}
+  .v25-meter span,.v25-model-bar span{display:block;height:100%;background:#2563eb}
+  .v25-model-row{display:grid;grid-template-columns:140px 1fr 70px;gap:8px;align-items:center;padding:5px 0}
+  @media print{
+    body{margin:12mm}
+    .no-print{display:none}
+  }
+</style>
+</head>
+<body>
+<h1>WCM Analyzer Pro Ver.25 分析レポート</h1>
+<p>作成日時：${new Date().toLocaleString("ja-JP")}</p>
+${body}
+<p style="font-size:10px;color:#64748b;margin-top:30px">
+本レポートは過去データに基づく参考分析です。将来の運用成果や税務上の取扱いを保証しません。
+</p>
+</body>
+</html>`);
+  reportWindow.document.close();
+
+  setTimeout(()=>{
+    reportWindow.focus();
+    reportWindow.print();
+  },500);
+}
+
 document.querySelectorAll(".tab").forEach(button=>{
   button.onclick=()=>{
     document.querySelectorAll(".tab").forEach(item=>item.classList.remove("active"));
@@ -7024,7 +7688,7 @@ document.querySelectorAll(".tab").forEach(button=>{
     $(button.dataset.page).hidden=false;
   };
 });
-$("distFile").onchange=e=>load(e.target,"dist");$("growthFile").onchange=e=>load(e.target,"growth");$("analyze").onclick=analyze;$("runBacktest").onclick=runForecastValidation;$("runRegime").onclick=runRegimeAnalysis;$("runAdvisor").onclick=runIntegratedAdvisor;$("savePrediction").onclick=saveCurrentPrediction;$("evaluatePredictions").onclick=evaluateSavedPredictions;$("clearLearning").onclick=clearLearningData;$("runAccuracyMeasurement").onclick=runAccuracyMeasurement;$("runStatisticalEngine").onclick=runStatisticalForecast;$("runAdaptiveAI").onclick=runAdaptiveAI;$("resetAdaptiveAI").onclick=resetAdaptiveAI;$("runAutoMode").onclick=runAutoModeDiagnosis;$("loadAutoData").onclick=()=>loadAutomaticCsv();$("analyzeAutoData").onclick=analyzeAutomaticCsv;$("renderFutureChart").onclick=renderFutureNavChart;$("saveLearningPrediction").onclick=saveCurrentLearningPrediction;$("evaluateLearningPredictions").onclick=evaluateSelfLearningPredictions;$("resetSelfLearning").onclick=resetSelfLearningData;$("runMonte").onclick=runMonte;$("compareMonte").onclick=compareMonteMethods;$("calcFire").onclick=calcFire;$("calcStress").onclick=renderStress;$("analyzeMarket").onclick=()=>{analyzeMarketEnvironment();if(last.d){renderOutlook();buildMorningBrief()}};$("recalcOutlook").onclick=renderOutlook;$("saveSnapshot").onclick=saveSnapshot;$("clearHistory").onclick=clearHistory;$("whatWouldIDo").onclick=buildWhatWouldIDo;$("saveMemo").onclick=saveDailyMemo;$("clearMemo").onclick=clearDailyMemo;$("download").onclick=download;
+$("distFile").onchange=e=>load(e.target,"dist");$("growthFile").onchange=e=>load(e.target,"growth");$("analyze").onclick=analyze;$("runBacktest").onclick=runForecastValidation;$("runRegime").onclick=runRegimeAnalysis;$("runAdvisor").onclick=runIntegratedAdvisor;$("savePrediction").onclick=saveCurrentPrediction;$("evaluatePredictions").onclick=evaluateSavedPredictions;$("clearLearning").onclick=clearLearningData;$("runAccuracyMeasurement").onclick=runAccuracyMeasurement;$("runStatisticalEngine").onclick=runStatisticalForecast;$("runAdaptiveAI").onclick=runAdaptiveAI;$("resetAdaptiveAI").onclick=resetAdaptiveAI;$("runAutoMode").onclick=runAutoModeDiagnosis;$("loadAutoData").onclick=()=>loadAutomaticCsv();$("analyzeAutoData").onclick=analyzeAutomaticCsv;$("renderFutureChart").onclick=renderFutureNavChart;$("saveLearningPrediction").onclick=saveCurrentLearningPrediction;$("evaluateLearningPredictions").onclick=evaluateSelfLearningPredictions;$("resetSelfLearning").onclick=resetSelfLearningData;$("runMonte").onclick=runMonte;$("compareMonte").onclick=compareMonteMethods;$("runV25Dashboard").onclick=runV25Dashboard;$("exportV25Pdf").onclick=exportV25ReportPdf;$("calcFire").onclick=calcFire;$("calcStress").onclick=renderStress;$("analyzeMarket").onclick=()=>{analyzeMarketEnvironment();if(last.d){renderOutlook();buildMorningBrief()}};$("recalcOutlook").onclick=renderOutlook;$("saveSnapshot").onclick=saveSnapshot;$("clearHistory").onclick=clearHistory;$("whatWouldIDo").onclick=buildWhatWouldIDo;$("saveMemo").onclick=saveDailyMemo;$("clearMemo").onclick=clearDailyMemo;$("download").onclick=download;
 $("taxMode").onchange=e=>$("taxRate").disabled=e.target.value==="before";
 try{const s=JSON.parse(localStorage.getItem("wcm5")||"{}");if(s.start)$("startDate").value=s.start;if(s.initial!=null)$("initial").value=s.initial;if(s.monthly!=null)$("monthly").value=s.monthly;if(s.day)$("day").value=s.day;if(s.taxMode)$("taxMode").value=s.taxMode;if(s.taxRate)$("taxRate").value=s.taxRate}catch(_){}
 if("serviceWorker"in navigator)navigator.serviceWorker.register("./sw.js").catch(()=>{});

@@ -12,15 +12,15 @@
   <meta name="apple-mobile-web-app-title" content="WCM Analyzer">
   <link rel="manifest" href="./manifest.json">
   <link rel="apple-touch-icon" href="./icon-192.svg">
-  <title>WCM Analyzer Pro Ver.24.1</title>
-<link rel="stylesheet" href="./style.css?v=241">
+  <title>WCM Analyzer Pro Ver.25</title>
+<link rel="stylesheet" href="./style.css?v=25">
 </head>
 <body>
 <main class="app">
 <header>
   <h1>WCM Analyzer Pro</h1>
-  <span class="badge">iPhone Edition Ver.24.1</span>
-  <p class="lead">Ver.24では、予測を保存し、実績照合からモデル重みを自動更新する自己学習AIを追加しました。</p>
+  <span class="badge">iPhone Edition Ver.25</span>
+  <p class="lead">Ver.25では、積立元本・分配金税区分・4期間予測・信頼度・モデル貢献度・投資判断・予測実績比較・PDF保存を統合しました。</p>
 </header>
 
 <section class="panel auto-data-panel">
@@ -78,6 +78,7 @@
     <button class="tab" data-page="outlook">今後の見通し</button>
     <button class="tab" data-page="forecast">将来予測</button>
     <button class="tab" data-page="selflearning">自己学習AI</button>
+    <button class="tab" data-page="v25dashboard">Ver.25総合</button>
     <button class="tab" data-page="validation">精度検証</button>
     <button class="tab" data-page="regime">相場局面</button>
     <button class="tab" data-page="advisor">総合判断</button>
@@ -800,6 +801,85 @@
     </div>
   </section>
 
+  <section id="v25dashboard" class="page" hidden>
+    <div class="panel v25-hero">
+      <h2>WCM AI統合ダッシュボード Ver.25</h2>
+      <p class="small">
+        積立元本、実際の積立日、分配金再投資、普通分配・特別分配の推定、
+        4期間予測、自己学習結果をまとめて参考判断を作成します。
+      </p>
+
+      <div class="grid">
+        <div class="field">
+          <label>分配金の取扱い</label>
+          <select id="v25DistributionMode">
+            <option value="reinvest" selected>再投資</option>
+            <option value="cash">現金受取</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>普通分配の税率（%）</label>
+          <input id="v25DistributionTax" type="number" inputmode="decimal" min="0" max="50" step="0.001" value="20.315">
+        </div>
+        <div class="field">
+          <label>判定スタイル</label>
+          <select id="v25RiskStyle">
+            <option value="defensive">慎重</option>
+            <option value="standard" selected>標準</option>
+            <option value="growth">積極</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="grid">
+        <button id="runV25Dashboard" class="primary">Ver.25総合分析を実行</button>
+        <button id="exportV25Pdf" class="green" disabled>分析結果をPDF保存</button>
+      </div>
+
+      <div id="v25Status" class="status" style="margin-top:14px">
+        CSVを分析後に実行してください。
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>AI信頼度と投資判断</h2>
+      <div id="v25DecisionHero"></div>
+      <div id="v25ConfidenceMeter" style="margin-top:14px"></div>
+      <div id="v25DecisionComment" class="comment" style="margin-top:14px"></div>
+    </div>
+
+    <div class="panel">
+      <h2>4期間の予測</h2>
+      <div id="v25HorizonCards" class="cards"></div>
+      <div id="v25HorizonChart" class="chart" style="margin-top:14px"></div>
+    </div>
+
+    <div class="panel">
+      <h2>モデルごとの貢献度</h2>
+      <div id="v25ContributionBars"></div>
+      <div id="v25ContributionComment" class="comment" style="margin-top:14px"></div>
+    </div>
+
+    <div class="panel">
+      <h2>積立元本・評価額・分配金</h2>
+      <div id="v25CapitalCards" class="cards"></div>
+      <div id="v25CapitalChart" class="chart" style="margin-top:14px"></div>
+      <div id="v25DistributionTable" style="margin-top:14px"></div>
+      <div id="v25DistributionNote" class="comment" style="margin-top:14px"></div>
+    </div>
+
+    <div class="panel">
+      <h2>過去予測と実績の比較</h2>
+      <div id="v25ForecastActualChart" class="chart"></div>
+      <div id="v25ForecastActualTable" style="margin-top:14px"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Ver.25総合レポート</h2>
+      <div id="v25Report" class="comment"></div>
+    </div>
+  </section>
+
   <section id="monte" class="page" hidden>
     <div class="panel">
       <h2>本格モンテカルロエンジン Ver.12</h2>
@@ -962,6 +1042,6 @@
 </section>
 </main>
 
-<script src="./app.js?v=241" defer></script>
+<script src="./app.js?v=25" defer></script>
 </body>
 </html>

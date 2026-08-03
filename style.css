@@ -447,3 +447,67 @@ textarea{
   gap:10px;
   font-weight:900;
 }
+
+
+/* Ver.25 Integrated Dashboard */
+.v25-hero{
+  background:
+    radial-gradient(circle at top right,rgba(37,99,235,.20),transparent 40%),
+    radial-gradient(circle at bottom left,rgba(34,197,94,.10),transparent 38%),
+    var(--panel);
+}
+.v25-confidence-number{
+  font-size:56px;
+  font-weight:950;
+  line-height:1;
+  letter-spacing:-2px;
+}
+.v25-decision{
+  margin-top:8px;
+  font-size:28px;
+  font-weight:950;
+}
+.v25-buy{color:#86efac}
+.v25-accumulate{color:#bfdbfe}
+.v25-wait{color:#fde68a}
+.v25-caution{color:#fca5a5}
+.v25-meter{
+  height:20px;
+  border-radius:999px;
+  overflow:hidden;
+  background:#25334d;
+  border:1px solid var(--line);
+}
+.v25-meter span{
+  display:block;
+  height:100%;
+  border-radius:999px;
+  background:linear-gradient(90deg,#ef4444,#f59e0b,#22c55e);
+}
+.v25-model-row{
+  display:grid;
+  grid-template-columns:minmax(120px,1fr) 2fr 72px;
+  align-items:center;
+  gap:10px;
+  padding:9px 0;
+}
+.v25-model-bar{
+  height:13px;
+  border-radius:999px;
+  background:#25334d;
+  overflow:hidden;
+}
+.v25-model-bar span{
+  display:block;
+  height:100%;
+  border-radius:999px;
+  background:linear-gradient(90deg,#3b82f6,#22c55e);
+}
+.v25-tax-normal{color:#fde68a;font-weight:900}
+.v25-tax-special{color:#86efac;font-weight:900}
+@media print{
+  body{background:#fff;color:#111}
+  header,.tabs,button,.no-print{display:none!important}
+  .panel{break-inside:avoid;border:1px solid #bbb;background:#fff;color:#111}
+  .comment,.card,.tablewrap{background:#fff;color:#111}
+}
