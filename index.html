@@ -12,14 +12,14 @@
   <meta name="apple-mobile-web-app-title" content="WCM Analyzer">
   <link rel="manifest" href="./manifest.json">
   <link rel="apple-touch-icon" href="./icon-192.svg">
-  <title>WCM Analyzer Pro Ver.24</title>
-<link rel="stylesheet" href="./style.css?v=24">
+  <title>WCM Analyzer Pro Ver.24.1</title>
+<link rel="stylesheet" href="./style.css?v=241">
 </head>
 <body>
 <main class="app">
 <header>
   <h1>WCM Analyzer Pro</h1>
-  <span class="badge">iPhone Edition Ver.24</span>
+  <span class="badge">iPhone Edition Ver.24.1</span>
   <p class="lead">Ver.24では、予測を保存し、実績照合からモデル重みを自動更新する自己学習AIを追加しました。</p>
 </header>
 
@@ -935,6 +935,9 @@
         <div class="field"><label>目標年齢</label><input id="targetAge" type="number" value="50" min="20" max="90"></div>
       </div>
       <button id="calcFire" class="green">FIRE診断を実行</button>
+      <div id="fireStatus" class="status" style="margin-top:14px">
+        入力後にFIRE診断を実行してください。
+      </div>
       <div id="fireResult" style="margin-top:14px"></div>
     </div>
   </section>
@@ -959,6 +962,6 @@
 </section>
 </main>
 
-<script src="./app.js?v=24" defer></script>
+<script src="./app.js?v=241" defer></script>
 </body>
 </html>

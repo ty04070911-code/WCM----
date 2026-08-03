@@ -1,5 +1,5 @@
 "use strict";
-const APP_VERSION="24.0";
+const APP_VERSION="24.1";
 
 /* =========================================================
    Ver.12 Integrated Professional Monte Carlo Engine
@@ -867,6 +867,16 @@ function renderStress(){
 
 追加投資による回復後の上乗せ効果は、単純計算で約${yen(Math.max(advantage,0))}です。実際には基準価額、約定日、分配金、税金で変わります。`
 }
+function sampleFireBootstrap(series,rng){
+  if(!Array.isArray(series)||series.length===0)return 0;
+  const index=Math.min(
+    Math.floor(rng()*series.length),
+    series.length-1
+  );
+  const value=series[index];
+  return Number.isFinite(value)?value:0;
+}
+
 function fireMonteCarlo(){
   if(!last.d)return null;
   const currentAge=+$("currentAge").value||35;
@@ -884,7 +894,7 @@ function fireMonteCarlo(){
     const rng=makeRng(700000+k*7919);
     let value=last.ds.reinvest;
     for(let m=0;m<months;m++){
-      for(let d=0;d<21;d++)value*=Math.max(1+sampleBootstrap(series,rng),.001);
+      for(let d=0;d<21;d++)value*=Math.max(1+sampleFireBootstrap(series,rng),.001);
       value+=monthly
     }
     outcomes.push(value)
@@ -1232,29 +1242,96 @@ ${reliability}
 }
 
 function calcFire(){
-  const need=+$("monthlyNeed").value||0;
-  const wr=(+$("withdrawRate").value||4)/100;
-  const dy=(+$("distributionYield").value||10)/100;
-  const annual=need*12;
-  const fire=annual/wr;
-  const dist=annual/dy;
-  const current=last.ds?.reinvest||0;
-  const sim=fireMonteCarlo();
+  const status=$("fireStatus");
+  const resultElement=$("fireResult");
 
-  $("fireResult").innerHTML=`
-    <div class="cards">
-      <div class="card"><div class="card-title">取崩型必要資産</div><div class="card-value">${yen(fire)}</div><div class="card-sub">現在との差 ${yen(Math.max(fire-current,0))}</div></div>
-      <div class="card"><div class="card-title">分配金生活必要資産</div><div class="card-value">${yen(dist)}</div><div class="card-sub">現在との差 ${yen(Math.max(dist-current,0))}</div></div>
-      <div class="card"><div class="card-title">目標年齢での達成確率</div><div class="card-value">${sim?sim.probability.toFixed(1):"0.0"}%</div><div class="card-sub">${sim?sim.years:0}年後</div></div>
-      <div class="card"><div class="card-title">目標時点の中央値</div><div class="card-value">${sim?yen(sim.median):yen(0)}</div></div>
-    </div>
-    ${sim?`<div class="comment" style="margin-top:12px">目標資産：${yen(sim.target)}
+  status.className="status";
+  status.textContent="FIRE診断を計算しています…";
+  resultElement.innerHTML="";
+
+  setTimeout(()=>{
+    try{
+      if(!last.d||!last.ds){
+        throw new Error("先にCSVを読み込み、「分析を開始」を押してください。");
+      }
+
+      const need=+$("monthlyNeed").value||0;
+      const withdrawRate=(+$("withdrawRate").value||0)/100;
+      const distributionYield=(+$("distributionYield").value||0)/100;
+      const currentAge=+$("currentAge").value||0;
+      const targetAge=+$("targetAge").value||0;
+
+      if(need<=0){
+        throw new Error("毎月必要な金額を1円以上で入力してください。");
+      }
+      if(withdrawRate<=0){
+        throw new Error("想定年間取崩率を0より大きくしてください。");
+      }
+      if(distributionYield<=0){
+        throw new Error("想定年間分配率を0より大きくしてください。");
+      }
+      if(targetAge<=currentAge){
+        throw new Error("目標年齢は現在年齢より大きくしてください。");
+      }
+
+      const annual=need*12;
+      const fire=annual/withdrawRate;
+      const dist=annual/distributionYield;
+      const current=last.ds.reinvest||0;
+      const sim=fireMonteCarlo();
+
+      if(!sim){
+        throw new Error("シミュレーション用データを作成できませんでした。");
+      }
+
+      resultElement.innerHTML=`
+        <div class="cards">
+          <div class="card">
+            <div class="card-title">取崩型必要資産</div>
+            <div class="card-value">${yen(fire)}</div>
+            <div class="card-sub">現在との差 ${yen(Math.max(fire-current,0))}</div>
+          </div>
+          <div class="card">
+            <div class="card-title">分配金生活必要資産</div>
+            <div class="card-value">${yen(dist)}</div>
+            <div class="card-sub">現在との差 ${yen(Math.max(dist-current,0))}</div>
+          </div>
+          <div class="card">
+            <div class="card-title">目標年齢での達成確率</div>
+            <div class="card-value">${sim.probability.toFixed(1)}%</div>
+            <div class="card-sub">${sim.years}年後</div>
+          </div>
+          <div class="card">
+            <div class="card-title">目標時点の中央値</div>
+            <div class="card-value">${yen(sim.median)}</div>
+          </div>
+        </div>
+        <div class="comment" style="margin-top:12px">
+目標資産：${yen(sim.target)}
 下位5%：${yen(sim.low)}
 中央値：${yen(sim.median)}
 上位5%：${yen(sim.high)}
 
-達成確率は過去の日次リターンを再抽出した1,000回の参考シミュレーションです。</div>`:""}`
+達成確率は過去の日次リターンを再抽出した1,000回の参考シミュレーションです。
+        </div>`;
+
+      status.className="status ok";
+      status.textContent="FIRE診断が完了しました。";
+
+      setTimeout(()=>{
+        resultElement.scrollIntoView({
+          behavior:"smooth",
+          block:"start"
+        });
+      },80);
+    }catch(error){
+      console.error("FIRE診断エラー",error);
+      status.className="status bad";
+      status.textContent=`FIRE診断エラー：${error.message}`;
+    }
+  },50);
 }
+
 function download(){
   if(!last.merged)return;
   const rows=[["年月日","投資元本","受取型合計","再投資型","資産成長型","累計分配金","推定税額"],...last.merged.map(x=>[x.dateText,Math.round(x.principal),Math.round(x.total),Math.round(x.reinvest),Math.round(x.growth),Math.round(x.cash),Math.round(x.tax)])];

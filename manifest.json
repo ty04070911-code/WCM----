@@ -1,11 +1,11 @@
 {
-  "name": "WCM Analyzer Pro Ver.24",
+  "name": "WCM Analyzer Pro Ver.24.1",
   "short_name": "WCM Analyzer",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#07101d",
   "theme_color": "#08111f",
-  "description": "予測保存、実績照合、モデル重み自動更新を行う自己学習AIを搭載",
+  "description": "FIRE診断の未定義関数と操作フィードバックを修正",
   "icons": [
     {
       "src": "./icon-192.svg",
