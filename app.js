@@ -1,5 +1,5 @@
 "use strict";
-const APP_VERSION="20.0";
+const APP_VERSION="21.0";
 
 /* =========================================================
    Ver.12 Integrated Professional Monte Carlo Engine
@@ -5778,6 +5778,214 @@ function renderAutoMode(diagnosis){
       </div>`;
 }
 
+
+const AutoDataService=(()=>{
+  const paths={
+    dist:"./data/wcm_distribution.csv",
+    growth:"./data/wcm_growth.csv",
+    meta:"./data/update-info.json"
+  };
+
+  async function fetchBuffer(path){
+    const response=await fetch(`${path}?t=${Date.now()}`,{cache:"no-store"});
+    if(!response.ok)throw new Error(`${response.status} ${response.statusText}`);
+    return response.arrayBuffer();
+  }
+
+  async function loadCsv(path){
+    const rows=parse(decode(await fetchBuffer(path)));
+    if(rows.length<10)throw new Error("有効な基準価額データが不足しています。");
+    return rows;
+  }
+
+  async function loadMeta(){
+    try{
+      const response=await fetch(`${paths.meta}?t=${Date.now()}`,{cache:"no-store"});
+      return response.ok?response.json():null;
+    }catch{return null}
+  }
+
+  async function load(){
+    const [dist,growth,meta]=await Promise.all([
+      loadCsv(paths.dist),
+      loadCsv(paths.growth),
+      loadMeta()
+    ]);
+    return {dist,growth,meta};
+  }
+
+  return Object.freeze({load});
+})();
+
+function prepareLoadedData(distRows,growthRows,sourceLabel){
+  distData=distRows;
+  growthData=growthRows;
+  const start=new Date(Math.max(distData[0].date,growthData[0].date));
+  if(!$("startDate").value)$("startDate").value=fmt(start).replaceAll("/","-");
+  $("distStatus").className="status ok";
+  $("distStatus").textContent=`${sourceLabel}：${distData.length.toLocaleString()}件`;
+  $("growthStatus").className="status ok";
+  $("growthStatus").textContent=`${sourceLabel}：${growthData.length.toLocaleString()}件`;
+  $("analyze").disabled=false;
+  $("analyzeAutoData").disabled=false;
+  $("mainStatus").textContent="分析できます。";
+}
+
+async function loadAutomaticCsv({silent=false}={}){
+  const status=$("autoDataStatus");
+  if(!silent){
+    status.className="status";
+    status.textContent="最新の自動更新データを読み込んでいます…";
+  }
+  try{
+    const data=await AutoDataService.load();
+    prepareLoadedData(data.dist,data.growth,"自動更新CSV");
+    const latestDist=data.dist.at(-1);
+    const latestGrowth=data.growth.at(-1);
+    const updated=data.meta?.updated_at_jst||data.meta?.updated_at||"更新日時不明";
+    status.className="status ok";
+    status.innerHTML='<span class="auto-data-ready">自動データを利用できます。</span>';
+    $("autoDataMeta").textContent=
+      `最終更新：${updated} ／ 予想分配型：${latestDist.dateText}・${latestDist.nav.toLocaleString()}円 ／ 資産成長型：${latestGrowth.dateText}・${latestGrowth.nav.toLocaleString()}円`;
+    return true;
+  }catch(error){
+    console.warn("自動CSV読込失敗",error);
+    status.className="status bad";
+    status.innerHTML='<span class="auto-data-error">自動データを読み込めませんでした。</span> 手動CSVは利用できます。';
+    $("autoDataMeta").textContent=`原因：${error.message}`;
+    return false;
+  }
+}
+
+async function analyzeAutomaticCsv(){
+  const loaded=distData&&growthData?true:await loadAutomaticCsv();
+  if(loaded)$("analyze").click();
+}
+
+function addBusinessDays(dateValue,count){
+  const value=new Date(dateValue);
+  let left=count;
+  while(left>0){
+    value.setDate(value.getDate()+1);
+    const day=value.getDay();
+    if(day!==0&&day!==6)left-=1;
+  }
+  return value;
+}
+
+function buildFuturePath(rows,horizon,modelChoice){
+  const settings=DataAdaptiveMode.bestStatSettings(rows.length,{horizon,model:modelChoice});
+  const result=StatisticalForecastEngine.run(rows,{
+    horizon:settings.horizon,
+    lookback:settings.lookback,
+    model:modelChoice,
+    interval:.90
+  });
+  const selected=result.selected;
+  const latest=rows.at(-1).nav;
+  const centerLog=Math.log(selected.center/latest);
+  const lowLog=Math.log(selected.low/latest);
+  const highLog=Math.log(selected.high/latest);
+  const center=[],low=[],high=[],dates=[];
+  for(let step=0;step<=result.horizon;step++){
+    const fraction=result.horizon?step/result.horizon:0;
+    const sqrtFraction=Math.sqrt(fraction);
+    const centerValue=latest*Math.exp(centerLog*fraction);
+    center.push(centerValue);
+    low.push(centerValue*Math.exp(-(centerLog-lowLog)*sqrtFraction));
+    high.push(centerValue*Math.exp((highLog-centerLog)*sqrtFraction));
+    dates.push(fmt(step===0?rows.at(-1).date:addBusinessDays(rows.at(-1).date,step)));
+  }
+  return {...result,centerPath:center,lowPath:low,highPath:high,dates};
+}
+
+function renderFutureNavChart(){
+  const status=$("futureChartStatus");
+  if(!last.d){
+    status.className="status bad";
+    status.textContent="先にCSVを読み込み、分析を開始してください。";
+    return;
+  }
+  status.className="status";
+  status.textContent="将来の予測経路を計算しています…";
+  try{
+    const prediction=buildFuturePath(
+      last.d,
+      +$("futureChartHorizon").value||21,
+      $("futureChartModel").value||"auto"
+    );
+    const historyDays=+$("futureHistoryDays").value||126;
+    drawFutureForecastChart(
+      $("futureNavChart"),
+      last.d.slice(-Math.min(historyDays,last.d.length)),
+      prediction
+    );
+    const selected=prediction.selected;
+    const latest=last.d.at(-1).nav;
+    const rate=(selected.center/latest-1)*100;
+    $("futureChartLegend").innerHTML=`
+      <span><i style="background:#0f172a"></i>実績</span>
+      <span><i style="background:#2563eb"></i>中心予測</span>
+      <span><i style="background:#16a34a"></i>予測上限</span>
+      <span><i style="background:#dc2626"></i>予測下限</span>
+      <span><i style="background:rgba(37,99,235,.18)"></i>90%予測範囲</span>`;
+    $("futureChartComment").textContent=`選択モデル：${statModelLabel(prediction.selectedId)}
+予測期間：${prediction.horizon}営業日
+現在基準価額：${Math.round(latest).toLocaleString()}円
+中心予測：${Math.round(selected.center).toLocaleString()}円（${rate>=0?"+":""}${rate.toFixed(2)}%）
+90%予測範囲：${Math.round(selected.low).toLocaleString()}円〜${Math.round(selected.high).toLocaleString()}円
+
+将来経路は最終予測値と予測範囲を日次へ展開した参考シナリオです。`;
+    status.className="status ok";
+    status.textContent="予想チャートを更新しました。";
+  }catch(error){
+    console.error(error);
+    status.className="status bad";
+    status.textContent=`予想チャートエラー：${error.message}`;
+  }
+}
+
+function drawFutureForecastChart(element,history,prediction){
+  const width=820,height=350,left=58,right=24,top=28,bottom=46;
+  const historical=history.map(row=>row.nav);
+  const all=[...historical,...prediction.lowPath,...prediction.highPath].filter(Number.isFinite);
+  let min=Math.min(...all),max=Math.max(...all);
+  const pad=(max-min||1)*.10;
+  min-=pad; max+=pad;
+  const span=max-min||1;
+  const total=history.length+prediction.centerPath.length-1;
+  const x=index=>left+index*(width-left-right)/Math.max(total-1,1);
+  const y=value=>top+(max-value)*(height-top-bottom)/span;
+  const points=(values,offset=0)=>values.map((value,index)=>`${x(offset+index)},${y(value)}`).join(" ");
+  const offset=history.length-1;
+  const band=[
+    ...prediction.highPath.map((value,index)=>`${x(offset+index)},${y(value)}`),
+    ...prediction.lowPath.slice().reverse().map((value,index)=>`${x(offset+prediction.lowPath.length-1-index)},${y(value)}`)
+  ].join(" ");
+  const grid=[];
+  for(let line=0;line<=4;line++){
+    const value=max-span*line/4;
+    const yy=top+(height-top-bottom)*line/4;
+    grid.push(`<line x1="${left}" y1="${yy}" x2="${width-right}" y2="${yy}" stroke="#cbd5e1"/>`);
+    grid.push(`<text x="${left-8}" y="${yy+4}" text-anchor="end" fill="#475569" font-size="11">${Math.round(value).toLocaleString()}</text>`);
+  }
+  const split=x(offset);
+  element.innerHTML=`<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="実績基準価額と将来予測範囲">
+    <rect width="${width}" height="${height}" fill="#f8fafc"/>
+    ${grid.join("")}
+    <polygon points="${band}" fill="rgba(37,99,235,.14)"/>
+    <polyline points="${points(historical)}" fill="none" stroke="#0f172a" stroke-width="3"/>
+    <polyline points="${points(prediction.centerPath,offset)}" fill="none" stroke="#2563eb" stroke-width="3"/>
+    <polyline points="${points(prediction.highPath,offset)}" fill="none" stroke="#16a34a" stroke-width="2" stroke-dasharray="7 5"/>
+    <polyline points="${points(prediction.lowPath,offset)}" fill="none" stroke="#dc2626" stroke-width="2" stroke-dasharray="7 5"/>
+    <line x1="${split}" y1="${top}" x2="${split}" y2="${height-bottom}" stroke="#7c3aed" stroke-width="2" stroke-dasharray="4 5"/>
+    <text x="${split+6}" y="${top+14}" fill="#6d28d9" font-size="11">予測開始</text>
+    <text x="${left}" y="${height-14}" fill="#475569" font-size="11">${history[0].dateText}</text>
+    <text x="${split}" y="${height-14}" text-anchor="middle" fill="#475569" font-size="11">${history.at(-1).dateText}</text>
+    <text x="${width-right}" y="${height-14}" text-anchor="end" fill="#475569" font-size="11">${prediction.dates.at(-1)}</text>
+  </svg>`;
+}
+
 document.querySelectorAll(".tab").forEach(button=>{
   button.onclick=()=>{
     document.querySelectorAll(".tab").forEach(item=>item.classList.remove("active"));
@@ -5786,17 +5994,4 @@ document.querySelectorAll(".tab").forEach(button=>{
     $(button.dataset.page).hidden=false;
   };
 });
-$("distFile").onchange=e=>load(e.target,"dist");$("growthFile").onchange=e=>load(e.target,"growth");$("analyze").onclick=analyze;$("runBacktest").onclick=runForecastValidation;$("runRegime").onclick=runRegimeAnalysis;$("runAdvisor").onclick=runIntegratedAdvisor;$("savePrediction").onclick=saveCurrentPrediction;$("evaluatePredictions").onclick=evaluateSavedPredictions;$("clearLearning").onclick=clearLearningData;$("runAccuracyMeasurement").onclick=runAccuracyMeasurement;$("runStatisticalEngine").onclick=runStatisticalForecast;$("runAdaptiveAI").onclick=runAdaptiveAI;$("resetAdaptiveAI").onclick=resetAdaptiveAI;$("runAutoMode").onclick=runAutoModeDiagnosis;$("runMonte").onclick=runMonte;$("compareMonte").onclick=compareMonteMethods;$("calcFire").onclick=calcFire;$("calcStress").onclick=renderStress;$("analyzeMarket").onclick=()=>{analyzeMarketEnvironment();if(last.d){renderOutlook();buildMorningBrief()}};$("recalcOutlook").onclick=renderOutlook;$("saveSnapshot").onclick=saveSnapshot;$("clearHistory").onclick=clearHistory;$("whatWouldIDo").onclick=buildWhatWouldIDo;$("saveMemo").onclick=saveDailyMemo;$("clearMemo").onclick=clearDailyMemo;$("download").onclick=download;
-$("taxMode").onchange=e=>$("taxRate").disabled=e.target.value==="before";
-try{const s=JSON.parse(localStorage.getItem("wcm5")||"{}");if(s.start)$("startDate").value=s.start;if(s.initial!=null)$("initial").value=s.initial;if(s.monthly!=null)$("monthly").value=s.monthly;if(s.day)$("day").value=s.day;if(s.taxMode)$("taxMode").value=s.taxMode;if(s.taxRate)$("taxRate").value=s.taxRate}catch(_){}
-if("serviceWorker"in navigator)navigator.serviceWorker.register("./sw.js").catch(()=>{});
-restoreMarketInputs();
-
-restoreOutlookSettings();
-renderHistory();
-
-restoreDailyMemo();
-
-renderLearningSystem();
-
-renderAdaptiveAI();
+$("distFile").onchange=e=>load(e.target,"dist");$("growthFile").onchange=e=>load(e.target,"growth");$("analyze").onclick=analyze;$("runBacktest").onclick=runForecastValidation;$("runRegime").onclick=runRegimeAnalysis;$("runAdvisor").onclick=runIntegratedAdvisor;$("savePrediction").onclick=saveCurrentPrediction;$("evaluatePredictions").onclick=evaluateSavedPredictions;$("clearLearning").onclick=clearLearningData;$("runAccuracyMeasurement").onclick=runAccuracyMeasurement;$("runStatisticalEngine").onclick=runStatisticalForecast;$("runAdaptiveAI").onclick=runAdaptiveAI;$("resetAdaptiveAI").onclick=resetAdaptiveAI;$("runAutoMode").onclick=runAutoModeDiagnosis;$("loadAutoData").onclick=()=>loadAutomaticCsv();$("analyzeAutoData").onclick=analyzeAutomaticCsv;$("renderFutureChart").onclick=renderFutureNavChart;$("runMonte").onclick=runMonte;$("compareMonte").onclick=compareMonteMethods;$("calcFire").onclick=calcFire;$("calcStress").onclick=renderStress;$("analyzeMarket").onclick=()=>{analyzeMarketEnvironment();if(last.d){renderOutlook();buildMorningBrief()}};$("recalcOutlook").onclick=renderOutlook;$("saveSnapshot").onclick=saveSnapshot;$("clearHistory").onclick=clearHistory;$("whatWouldIDo").onclick=buildWhatWouldIDo;$("saveMemo").onclick=saveDa
