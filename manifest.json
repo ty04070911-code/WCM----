@@ -1,11 +1,11 @@
 {
-  "name": "WCM Analyzer Pro Ver.22",
+  "name": "WCM Analyzer Pro Ver.22.1",
   "short_name": "WCM Analyzer",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#07101d",
   "theme_color": "#08111f",
-  "description": "公式CSV直接取得、IndexedDBキャッシュ、手動CSVフォールバックを搭載",
+  "description": "GitHub Actionsによる公式CSV自動更新の安定版",
   "icons": [
     {
       "src": "./icon-192.svg",

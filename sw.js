@@ -1,4 +1,4 @@
-const CACHE="wcm-analyzer-v22-direct-data";
+const CACHE="wcm-analyzer-v22-1-actions-stable";
 const ASSETS=[
   "./",
   "./index.html",
@@ -29,6 +29,19 @@ self.addEventListener("activate",event=>{
 
 self.addEventListener("fetch",event=>{
   if(event.request.method!=="GET")return;
+
+  const url=new URL(event.request.url);
+  if(url.origin===self.location.origin&&url.pathname.includes("/data/")){
+    event.respondWith(
+      fetch(event.request,{cache:"no-store"})
+        .then(response=>{
+          if(!response||!response.ok)throw new Error("data fetch failed");
+          return response;
+        })
+        .catch(()=>caches.match(event.request))
+    );
+    return;
+  }
 
   event.respondWith(
     fetch(event.request,{cache:"no-store"})
