@@ -1,5 +1,5 @@
 "use strict";
-const APP_VERSION="21.0";
+const APP_VERSION="22.0";
 
 /* =========================================================
    Ver.12 Integrated Professional Monte Carlo Engine
@@ -5779,47 +5779,270 @@ function renderAutoMode(diagnosis){
 }
 
 
+
 const AutoDataService=(()=>{
-  const paths={
-    dist:"./data/wcm_distribution.csv",
-    growth:"./data/wcm_growth.csv",
-    meta:"./data/update-info.json"
+  const CACHE_DB="wcm-analyzer-auto-data";
+  const CACHE_STORE="csv";
+  const CACHE_VERSION=1;
+
+  const funds={
+    dist:{
+      label:"予想分配金提示型",
+      page:"https://www.alamco.co.jp/fund/WCM_es/index.html",
+      expected:"171514_price.csv",
+      candidates:[
+        "https://www.alamco.co.jp/fund/WCM_es/171514_price.csv",
+        "https://www.alamco.co.jp/fund/WCM_es/csv/171514_price.csv",
+        "https://www.alamco.co.jp/fund/WCM_es/data/171514_price.csv",
+        "https://www.alamco.co.jp/fund/csv/171514_price.csv",
+        "https://www.alamco.co.jp/fund/data/171514_price.csv"
+      ]
+    },
+    growth:{
+      label:"資産成長型",
+      page:"https://www.alamco.co.jp/fund/WCM_ag/index.html",
+      expected:"170514_price.csv",
+      candidates:[
+        "https://www.alamco.co.jp/fund/WCM_ag/170514_price.csv",
+        "https://www.alamco.co.jp/fund/WCM_ag/csv/170514_price.csv",
+        "https://www.alamco.co.jp/fund/WCM_ag/data/170514_price.csv",
+        "https://www.alamco.co.jp/fund/csv/170514_price.csv",
+        "https://www.alamco.co.jp/fund/data/170514_price.csv"
+      ]
+    }
   };
 
-  async function fetchBuffer(path){
-    const response=await fetch(`${path}?t=${Date.now()}`,{cache:"no-store"});
-    if(!response.ok)throw new Error(`${response.status} ${response.statusText}`);
-    return response.arrayBuffer();
+  function openDb(){
+    return new Promise((resolve,reject)=>{
+      if(!("indexedDB" in window)){
+        reject(new Error("IndexedDBを利用できません。"));
+        return;
+      }
+
+      const request=indexedDB.open(CACHE_DB,CACHE_VERSION);
+
+      request.onupgradeneeded=()=>{
+        const db=request.result;
+        if(!db.objectStoreNames.contains(CACHE_STORE)){
+          db.createObjectStore(CACHE_STORE);
+        }
+      };
+
+      request.onsuccess=()=>resolve(request.result);
+      request.onerror=()=>reject(request.error||new Error("キャッシュDBを開けません。"));
+    });
   }
 
-  async function loadCsv(path){
-    const rows=parse(decode(await fetchBuffer(path)));
-    if(rows.length<10)throw new Error("有効な基準価額データが不足しています。");
-    return rows;
-  }
-
-  async function loadMeta(){
+  async function saveCache(key,value){
     try{
-      const response=await fetch(`${paths.meta}?t=${Date.now()}`,{cache:"no-store"});
-      return response.ok?response.json():null;
-    }catch{return null}
+      const db=await openDb();
+      await new Promise((resolve,reject)=>{
+        const transaction=db.transaction(CACHE_STORE,"readwrite");
+        transaction.objectStore(CACHE_STORE).put(value,key);
+        transaction.oncomplete=resolve;
+        transaction.onerror=()=>reject(transaction.error);
+      });
+      db.close();
+    }catch(error){
+      console.warn("CSVキャッシュ保存失敗",error);
+    }
+  }
+
+  async function readCache(key){
+    try{
+      const db=await openDb();
+      const value=await new Promise((resolve,reject)=>{
+        const transaction=db.transaction(CACHE_STORE,"readonly");
+        const request=transaction.objectStore(CACHE_STORE).get(key);
+        request.onsuccess=()=>resolve(request.result||null);
+        request.onerror=()=>reject(request.error);
+      });
+      db.close();
+      return value;
+    }catch(error){
+      console.warn("CSVキャッシュ読込失敗",error);
+      return null;
+    }
+  }
+
+  async function fetchText(url){
+    const controller=new AbortController();
+    const timer=setTimeout(()=>controller.abort(),12000);
+
+    try{
+      const response=await fetch(
+        `${url}${url.includes("?")?"&":"?"}t=${Date.now()}`,
+        {
+          cache:"no-store",
+          mode:"cors",
+          signal:controller.signal,
+          headers:{Accept:"text/csv,text/plain,text/html,*/*"}
+        }
+      );
+
+      if(!response.ok){
+        throw new Error(`${response.status} ${response.statusText}`);
+      }
+
+      return {
+        text:await response.text(),
+        finalUrl:response.url||url,
+        contentType:response.headers.get("content-type")||""
+      };
+    }finally{
+      clearTimeout(timer);
+    }
+  }
+
+  function looksLikeCsv(text){
+    if(!text||text.length<100)return false;
+    const sample=text.slice(0,2500);
+    return sample.includes(",")&&
+      /(?:年月日|基準日|date|\d{4}[\/-]?\d{1,2}[\/-]?\d{1,2})/i.test(sample)&&
+      /\d{3,}/.test(sample);
+  }
+
+  function extractCsvUrls(html,pageUrl,expected){
+    const found=[];
+    const regexes=[
+      /href\s*=\s*["']([^"']+\.csv(?:\?[^"']*)?)["']/gi,
+      /["']([^"']+\.csv(?:\?[^"']*)?)["']/gi
+    ];
+
+    for(const regex of regexes){
+      let match;
+      while((match=regex.exec(html))){
+        try{
+          found.push(new URL(match[1],pageUrl).href);
+        }catch{}
+      }
+    }
+
+    const base=new URL(".",pageUrl).href;
+    found.push(
+      new URL(expected,base).href,
+      new URL(`csv/${expected}`,base).href,
+      new URL(`data/${expected}`,base).href
+    );
+
+    return [...new Set(found)];
+  }
+
+  async function discoverFundCsv(config){
+    const attempts=[];
+    let pageUrls=[];
+
+    try{
+      const page=await fetchText(config.page);
+      pageUrls=extractCsvUrls(page.text,config.page,config.expected);
+    }catch(error){
+      attempts.push(`公式ページ: ${error.message}`);
+    }
+
+    const candidates=[...new Set([...pageUrls,...config.candidates])];
+
+    for(const url of candidates){
+      try{
+        const response=await fetchText(url);
+        if(looksLikeCsv(response.text)){
+          const rows=parse(response.text);
+          if(rows.length>=10){
+            return {
+              rows,
+              csvText:response.text,
+              url:response.finalUrl,
+              attempts
+            };
+          }
+        }
+        attempts.push(`${url}: CSV形式ではありません`);
+      }catch(error){
+        attempts.push(`${url}: ${error.message}`);
+      }
+    }
+
+    throw new Error(
+      attempts.length
+        ?attempts.slice(-5).join(" / ")
+        :"公式CSV候補を取得できませんでした。"
+    );
+  }
+
+  async function loadFund(key){
+    const config=funds[key];
+
+    try{
+      const remote=await discoverFundCsv(config);
+      const cache={
+        csvText:remote.csvText,
+        savedAt:new Date().toISOString(),
+        url:remote.url,
+        label:config.label
+      };
+      await saveCache(key,cache);
+
+      return {
+        rows:remote.rows,
+        source:"live",
+        savedAt:cache.savedAt,
+        url:remote.url,
+        label:config.label
+      };
+    }catch(remoteError){
+      const cached=await readCache(key);
+
+      if(cached?.csvText){
+        const rows=parse(cached.csvText);
+        if(rows.length>=10){
+          return {
+            rows,
+            source:"cache",
+            savedAt:cached.savedAt,
+            url:cached.url,
+            label:config.label,
+            remoteError:remoteError.message
+          };
+        }
+      }
+
+      throw new Error(
+        `${config.label}: 公式取得と端末キャッシュの両方を利用できません。${remoteError.message}`
+      );
+    }
   }
 
   async function load(){
-    const [dist,growth,meta]=await Promise.all([
-      loadCsv(paths.dist),
-      loadCsv(paths.growth),
-      loadMeta()
+    const results=await Promise.allSettled([
+      loadFund("dist"),
+      loadFund("growth")
     ]);
-    return {dist,growth,meta};
+
+    const errors=[];
+    const dist=results[0].status==="fulfilled"?results[0].value:null;
+    const growth=results[1].status==="fulfilled"?results[1].value:null;
+
+    if(!dist)errors.push(results[0].reason?.message||"予想分配型取得失敗");
+    if(!growth)errors.push(results[1].reason?.message||"資産成長型取得失敗");
+
+    if(!dist||!growth){
+      throw new Error(errors.join(" / "));
+    }
+
+    return {dist,growth};
   }
 
-  return Object.freeze({load});
+  return Object.freeze({
+    load,
+    readCache,
+    funds
+  });
 })();
 
-function prepareLoadedData(distRows,growthRows,sourceLabel){
+
+function prepareLoadedData(distRows,growthRows,sourceLabel,sourceDetails=null){
   distData=distRows;
   growthData=growthRows;
+  last.autoDataSources=sourceDetails;
   const start=new Date(Math.max(distData[0].date,growthData[0].date));
   if(!$("startDate").value)$("startDate").value=fmt(start).replaceAll("/","-");
   $("distStatus").className="status ok";
@@ -5833,29 +6056,91 @@ function prepareLoadedData(distRows,growthRows,sourceLabel){
 
 async function loadAutomaticCsv({silent=false}={}){
   const status=$("autoDataStatus");
+
   if(!silent){
     status.className="status";
-    status.textContent="最新の自動更新データを読み込んでいます…";
+    status.textContent="公式サイトへ接続し、最新CSVを探しています…";
   }
+
   try{
     const data=await AutoDataService.load();
-    prepareLoadedData(data.dist,data.growth,"自動更新CSV");
-    const latestDist=data.dist.at(-1);
-    const latestGrowth=data.growth.at(-1);
-    const updated=data.meta?.updated_at_jst||data.meta?.updated_at||"更新日時不明";
+
+    prepareLoadedData(
+      data.dist.rows,
+      data.growth.rows,
+      "自動取得データ",
+      {
+        dist:data.dist,
+        growth:data.growth
+      }
+    );
+
+    const latestDist=data.dist.rows.at(-1);
+    const latestGrowth=data.growth.rows.at(-1);
+    const liveCount=[data.dist,data.growth]
+      .filter(item=>item.source==="live").length;
+
     status.className="status ok";
-    status.innerHTML='<span class="auto-data-ready">自動データを利用できます。</span>';
+    status.innerHTML=liveCount===2
+      ?'<span class="auto-data-ready">公式サイトから最新データを取得しました。</span>'
+      :'<span class="auto-data-ready">データを読み込みました。</span> 一部は端末キャッシュを使用しています。';
+
     $("autoDataMeta").textContent=
-      `最終更新：${updated} ／ 予想分配型：${latestDist.dateText}・${latestDist.nav.toLocaleString()}円 ／ 資産成長型：${latestGrowth.dateText}・${latestGrowth.nav.toLocaleString()}円`;
+      `予想分配型：${latestDist.dateText}・${latestDist.nav.toLocaleString()}円 ／ `+
+      `資産成長型：${latestGrowth.dateText}・${latestGrowth.nav.toLocaleString()}円`;
+
+    renderAutoDataSources(data);
     return true;
   }catch(error){
     console.warn("自動CSV読込失敗",error);
+
     status.className="status bad";
-    status.innerHTML='<span class="auto-data-error">自動データを読み込めませんでした。</span> 手動CSVは利用できます。';
+    status.innerHTML=
+      '<span class="auto-data-error">自動取得と端末キャッシュを利用できませんでした。</span> '+
+      '下の手動CSVを選択してください。';
+
     $("autoDataMeta").textContent=`原因：${error.message}`;
+    renderAutoDataSources(null,error);
     return false;
   }
 }
+
+function renderAutoDataSources(data,error=null){
+  const container=$("autoDataSourceCards");
+  if(!container)return;
+
+  if(!data){
+    container.innerHTML=`
+      <div class="card source-card-manual">
+        <div class="card-title">現在の読込方法</div>
+        <div class="card-value">手動CSV</div>
+        <span class="source-badge source-manual">フォールバック</span>
+        <div class="card-sub">${error?.message||"自動取得できませんでした"}</div>
+      </div>`;
+    return;
+  }
+
+  function sourceCard(item){
+    const live=item.source==="live";
+    const saved=item.savedAt
+      ?new Date(item.savedAt).toLocaleString("ja-JP")
+      :"不明";
+
+    return `
+      <div class="card ${live?"source-card-live":"source-card-cache"}">
+        <div class="card-title">${item.label}</div>
+        <div class="card-value">${live?"公式取得":"端末キャッシュ"}</div>
+        <span class="source-badge ${live?"source-live":"source-cache"}">
+          ${live?"最新取得":"前回データ"}
+        </span>
+        <div class="card-sub">保存日時：${saved}</div>
+      </div>`;
+  }
+
+  container.innerHTML=
+    sourceCard(data.dist)+sourceCard(data.growth);
+}
+
 
 async function analyzeAutomaticCsv(){
   const loaded=distData&&growthData?true:await loadAutomaticCsv();
@@ -5994,4 +6279,19 @@ document.querySelectorAll(".tab").forEach(button=>{
     $(button.dataset.page).hidden=false;
   };
 });
-$("distFile").onchange=e=>load(e.target,"dist");$("growthFile").onchange=e=>load(e.target,"growth");$("analyze").onclick=analyze;$("runBacktest").onclick=runForecastValidation;$("runRegime").onclick=runRegimeAnalysis;$("runAdvisor").onclick=runIntegratedAdvisor;$("savePrediction").onclick=saveCurrentPrediction;$("evaluatePredictions").onclick=evaluateSavedPredictions;$("clearLearning").onclick=clearLearningData;$("runAccuracyMeasurement").onclick=runAccuracyMeasurement;$("runStatisticalEngine").onclick=runStatisticalForecast;$("runAdaptiveAI").onclick=runAdaptiveAI;$("resetAdaptiveAI").onclick=resetAdaptiveAI;$("runAutoMode").onclick=runAutoModeDiagnosis;$("loadAutoData").onclick=()=>loadAutomaticCsv();$("analyzeAutoData").onclick=analyzeAutomaticCsv;$("renderFutureChart").onclick=renderFutureNavChart;$("runMonte").onclick=runMonte;$("compareMonte").onclick=compareMonteMethods;$("calcFire").onclick=calcFire;$("calcStress").onclick=renderStress;$("analyzeMarket").onclick=()=>{analyzeMarketEnvironment();if(last.d){renderOutlook();buildMorningBrief()}};$("recalcOutlook").onclick=renderOutlook;$("saveSnapshot").onclick=saveSnapshot;$("clearHistory").onclick=clearHistory;$("whatWouldIDo").onclick=buildWhatWouldIDo;$("saveMemo").onclick=saveDa
+$("distFile").onchange=e=>load(e.target,"dist");$("growthFile").onchange=e=>load(e.target,"growth");$("analyze").onclick=analyze;$("runBacktest").onclick=runForecastValidation;$("runRegime").onclick=runRegimeAnalysis;$("runAdvisor").onclick=runIntegratedAdvisor;$("savePrediction").onclick=saveCurrentPrediction;$("evaluatePredictions").onclick=evaluateSavedPredictions;$("clearLearning").onclick=clearLearningData;$("runAccuracyMeasurement").onclick=runAccuracyMeasurement;$("runStatisticalEngine").onclick=runStatisticalForecast;$("runAdaptiveAI").onclick=runAdaptiveAI;$("resetAdaptiveAI").onclick=resetAdaptiveAI;$("runAutoMode").onclick=runAutoModeDiagnosis;$("loadAutoData").onclick=()=>loadAutomaticCsv();$("analyzeAutoData").onclick=analyzeAutomaticCsv;$("renderFutureChart").onclick=renderFutureNavChart;$("runMonte").onclick=runMonte;$("compareMonte").onclick=compareMonteMethods;$("calcFire").onclick=calcFire;$("calcStress").onclick=renderStress;$("analyzeMarket").onclick=()=>{analyzeMarketEnvironment();if(last.d){renderOutlook();buildMorningBrief()}};$("recalcOutlook").onclick=renderOutlook;$("saveSnapshot").onclick=saveSnapshot;$("clearHistory").onclick=clearHistory;$("whatWouldIDo").onclick=buildWhatWouldIDo;$("saveMemo").onclick=saveDailyMemo;$("clearMemo").onclick=clearDailyMemo;$("download").onclick=download;
+$("taxMode").onchange=e=>$("taxRate").disabled=e.target.value==="before";
+try{const s=JSON.parse(localStorage.getItem("wcm5")||"{}");if(s.start)$("startDate").value=s.start;if(s.initial!=null)$("initial").value=s.initial;if(s.monthly!=null)$("monthly").value=s.monthly;if(s.day)$("day").value=s.day;if(s.taxMode)$("taxMode").value=s.taxMode;if(s.taxRate)$("taxRate").value=s.taxRate}catch(_){}
+if("serviceWorker"in navigator)navigator.serviceWorker.register("./sw.js").catch(()=>{});
+restoreMarketInputs();
+
+restoreOutlookSettings();
+renderHistory();
+
+restoreDailyMemo();
+
+renderLearningSystem();
+
+renderAdaptiveAI();
+
+loadAutomaticCsv({silent:true});
