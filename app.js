@@ -1,5 +1,5 @@
 "use strict";
-const APP_VERSION="19.0";
+const APP_VERSION="20.0";
 
 /* =========================================================
    Ver.12 Integrated Professional Monte Carlo Engine
@@ -856,7 +856,17 @@ function analyze(){
     const ds=simDist(d,initial,monthly,day,tax),gs=simGrowth(g,initial,monthly,day);
     const rs=[result("分配金受取",ds.principal,ds.total),result("分配金再投資",ds.principal,ds.reinvest),result("資産成長型",gs.principal,gs.value)];
     last={d,g,ds,gs,rs};
-    $("adaptiveStatus").className="status";
+    try{
+      const autoDiagnosis=DataAdaptiveMode.diagnose(d.length);
+      last.autoMode=autoDiagnosis;
+      applyAutoModeToControls(autoDiagnosis);
+      renderAutoMode(autoDiagnosis);
+      $("autoModeStatus").className="status ok";
+      $("autoModeStatus").textContent=`${d.length}営業日から${autoDiagnosis.current.label}を自動選択しました。`;
+    }catch(error){
+      console.warn("自動モード診断に失敗しました。",error);
+    }
+        $("adaptiveStatus").className="status";
     $("adaptiveStatus").textContent="分析データを更新しました。必要に応じてAdaptive AIを再学習してください。";
     $("statStatus").className="status";
     $("statStatus").textContent="分析データを更新しました。「統計予測を実行」を押してください。";
@@ -2935,8 +2945,8 @@ const MarketRegimeEngine=(()=>{
     const horizon=Math.max(5,+options.horizon||21);
     const count=Math.max(3,+options.count||5);
 
-    if(rows.length<window+horizon+40){
-      throw new Error(`データ不足です。最低でも${window+horizon+40}営業日程度必要です。`);
+    if(rows.length<window+horizon){
+      throw new Error(`現在の局面設定には${window+horizon}営業日必要です。`);
     }
 
     const currentRows=rows.slice(-window);
@@ -3585,24 +3595,37 @@ function buildAdvisorMonte(horizon,runs){
 }
 
 function ensureAdvisorValidation(horizon){
-  const lookback=horizon<=21?120:252;
-  const step=horizon<=21?5:10;
+  const settings=DataAdaptiveMode.bestValidationSettings(
+    last.d.length,
+    {
+      horizon,
+      lookback:horizon<=21?120:252,
+      step:horizon<=21?5:10
+    }
+  );
 
   return ForecastValidationEngine.run(last.d,{
-    horizon,
-    lookback,
-    step,
+    horizon:settings.horizon,
+    lookback:settings.lookback,
+    step:settings.step,
     interval:.90
   });
 }
 
 function ensureAdvisorRegime(horizon){
-  const window=horizon<=21?63:126;
+  const settings=DataAdaptiveMode.bestAdvisorSettings(
+    last.d.length,
+    horizon
+  );
+  const window=Math.min(
+    settings.lookback,
+    Math.max(21,last.d.length-settings.horizon-1)
+  );
 
   return MarketRegimeEngine.analyze(last.d,{
-    window,
-    horizon,
-    count:5
+    window:Math.max(21,window),
+    horizon:Math.max(1,settings.horizon),
+    count:Math.min(5,Math.max(3,Math.floor(last.d.length/30)))
   });
 }
 
@@ -4383,8 +4406,10 @@ const AccuracyMeasurementEngine=(()=>{
     const lookback=Math.max(60,+options.lookback||120);
     const step=Math.max(1,+options.step||5);
     const interval=clamp(+options.interval||.90,.5,.99);
-    const minimum=Math.max(lookback,63);
-    if(rows.length<minimum+horizon+20)throw new Error(`データ不足です。最低でも${minimum+horizon+20}営業日程度必要です。`);
+    const minimum=Math.max(lookback,Math.min(63,lookback));
+    if(rows.length<minimum+horizon){
+      throw new Error(`現在の設定には${minimum+horizon}営業日必要です。自動モードで設定を調整してください。`);
+    }
 
     const byModel=Object.fromEntries(models.map(m=>[m.id,[]]));
     const integrated=[];
@@ -4455,12 +4480,23 @@ function runAccuracyMeasurement(){
   status.textContent="過去データで予測を繰り返し、精度を測定しています…";
   setTimeout(()=>{
     try{
+      const autoSettings=DataAdaptiveMode.bestValidationSettings(
+        last.d.length,
+        {
+          horizon:+$("measureHorizon").value,
+          lookback:+$("measureLookback").value,
+          step:+$("measureStep").value
+        }
+      );
+
       const result=AccuracyMeasurementEngine.run(last.d,{
-        horizon:+$("measureHorizon").value,
-        lookback:+$("measureLookback").value,
-        step:+$("measureStep").value,
+        horizon:autoSettings.horizon,
+        lookback:autoSettings.lookback,
+        step:autoSettings.step,
         interval:+$("measureInterval").value
       });
+
+      result.autoSettings=autoSettings;
       last.measurement=result;
       renderAccuracyMeasurement(result);
       status.className="status ok";
@@ -4620,8 +4656,8 @@ const StatisticalForecastEngine=(()=>{
 
   function forecastModel(rows,horizon,interval,modelId,regime){
     const returnsValue=logReturns(rows);
-    if(returnsValue.length<30){
-      throw new Error("統計予測には30営業日以上のデータが必要です。");
+    if(returnsValue.length<20){
+      throw new Error("統計予測には20営業日以上のデータが必要です。");
     }
 
     const latest=rows.at(-1).nav;
@@ -4900,12 +4936,22 @@ function runStatisticalForecast(){
 
   setTimeout(()=>{
     try{
+      const autoSettings=DataAdaptiveMode.bestStatSettings(
+        last.d.length,
+        {
+          horizon:+$("statHorizon").value,
+          model:$("statModel").value
+        }
+      );
+
       const result=StatisticalForecastEngine.run(last.d,{
-        horizon:+$("statHorizon").value,
-        lookback:+$("statLookback").value,
-        model:$("statModel").value,
+        horizon:autoSettings.horizon,
+        lookback:autoSettings.lookback,
+        model:autoSettings.model,
         interval:+$("statInterval").value
       });
+
+      result.autoSettings=autoSettings;
 
       last.statistics=result;
       renderStatisticalForecast(result);
@@ -5437,6 +5483,301 @@ ${labels[top[0]]}
     :'<div class="small">学習履歴はありません。</div>';
 }
 
+
+/* =========================================================
+   Ver.20 Data-Adaptive Auto Mode
+   ========================================================= */
+
+const DataAdaptiveMode=(()=>{
+  const MODES=[
+    {
+      id:"simple",
+      label:"簡易AI",
+      minDays:45,
+      score:25,
+      className:"mode-simple",
+      description:"短期データだけで、方向性と変動率を簡易判定します。"
+    },
+    {
+      id:"light",
+      label:"軽量AI",
+      minDays:70,
+      score:45,
+      className:"mode-light",
+      description:"短期予測と簡易バックテストを利用できます。"
+    },
+    {
+      id:"standard",
+      label:"標準AI",
+      minDays:145,
+      score:65,
+      className:"mode-standard",
+      description:"1か月予測、精度検証、総合判断を標準設定で利用できます。"
+    },
+    {
+      id:"advanced",
+      label:"高精度AI",
+      minDays:280,
+      score:82,
+      className:"mode-advanced",
+      description:"1年程度の学習期間と統計モデルを安定して利用できます。"
+    },
+    {
+      id:"full",
+      label:"フルAI",
+      minDays:550,
+      score:100,
+      className:"mode-full",
+      description:"長期検証、局面比較、統計モデル、Adaptive AIを最大設定で利用できます。"
+    }
+  ];
+
+  function detect(days){
+    const available=MODES.filter(mode=>days>=mode.minDays);
+    const current=available.at(-1)||{
+      ...MODES[0],
+      id:"limited",
+      label:"準備モード",
+      minDays:0,
+      score:10,
+      className:"mode-simple",
+      description:"最低45営業日に達するまで、基本分析を中心に利用します。"
+    };
+    const currentIndex=MODES.findIndex(mode=>mode.id===current.id);
+    const next=currentIndex>=0&&currentIndex<MODES.length-1
+      ?MODES[currentIndex+1]
+      :null;
+
+    return {
+      days,
+      current,
+      next,
+      remaining:next?Math.max(next.minDays-days,0):0,
+      progress:next
+        ?clamp(
+            (days-current.minDays)/
+            Math.max(next.minDays-current.minDays,1)*100,
+            0,
+            100
+          )
+        :100
+    };
+  }
+
+  function bestValidationSettings(days,requested={}){
+    const requestedHorizon=+requested.horizon||21;
+    const requestedLookback=+requested.lookback||120;
+    const requestedStep=+requested.step||5;
+
+    const candidates=[
+      {horizon:126,lookback:504,step:21,min:651,label:"半年・504日"},
+      {horizon:63,lookback:252,step:10,min:336,label:"3か月・252日"},
+      {horizon:21,lookback:252,step:5,min:294,label:"1か月・252日"},
+      {horizon:21,lookback:120,step:5,min:162,label:"1か月・120日"},
+      {horizon:5,lookback:120,step:5,min:146,label:"1週間・120日"},
+      {horizon:21,lookback:60,step:5,min:102,label:"1か月・60日"},
+      {horizon:5,lookback:60,step:5,min:86,label:"1週間・60日"},
+      {horizon:5,lookback:40,step:5,min:66,label:"簡易1週間・40日"}
+    ];
+
+    const requestedMin=Math.max(requestedLookback,63)+requestedHorizon+20;
+    if(days>=requestedMin){
+      return {
+        horizon:requestedHorizon,
+        lookback:requestedLookback,
+        step:requestedStep,
+        adjusted:false,
+        minimum:requestedMin,
+        label:"指定設定"
+      };
+    }
+
+    const selected=candidates.find(candidate=>days>=candidate.min);
+    if(selected){
+      return {...selected,adjusted:true,minimum:selected.min};
+    }
+
+    return {
+      horizon:Math.max(1,Math.min(5,days-41)),
+      lookback:Math.max(30,Math.min(40,days-21)),
+      step:5,
+      adjusted:true,
+      minimum:45,
+      label:"超軽量推定",
+      limited:true
+    };
+  }
+
+  function bestAdvisorSettings(days,requestedHorizon=21){
+    if(days>=550)return {horizon:requestedHorizon,lookback:252,mode:"full",adjusted:false};
+    if(days>=280)return {horizon:Math.min(requestedHorizon,63),lookback:252,mode:"advanced",adjusted:requestedHorizon>63};
+    if(days>=145)return {horizon:Math.min(requestedHorizon,21),lookback:120,mode:"standard",adjusted:requestedHorizon>21};
+    if(days>=85)return {horizon:5,lookback:60,mode:"light",adjusted:true};
+    return {horizon:Math.max(1,Math.min(5,days-41)),lookback:Math.max(30,days-21),mode:"simple",adjusted:true,limited:true};
+  }
+
+  function bestStatSettings(days,requested={}){
+    if(days>=550)return {horizon:+requested.horizon||21,lookback:504,model:requested.model||"auto",adjusted:false};
+    if(days>=280)return {horizon:Math.min(+requested.horizon||21,63),lookback:252,model:requested.model||"auto",adjusted:false};
+    if(days>=145)return {horizon:Math.min(+requested.horizon||21,21),lookback:120,model:"ensemble",adjusted:true};
+    if(days>=70)return {horizon:5,lookback:60,model:"baseline",adjusted:true};
+    return {horizon:5,lookback:Math.max(30,days-10),model:"baseline",adjusted:true,limited:true};
+  }
+
+  function diagnose(days){
+    const mode=detect(days);
+    return {
+      ...mode,
+      validation:bestValidationSettings(days,{
+        horizon:+$("measureHorizon")?.value||21,
+        lookback:+$("measureLookback")?.value||120,
+        step:+$("measureStep")?.value||5
+      }),
+      advisor:bestAdvisorSettings(
+        days,
+        +$("advisorHorizon")?.value||21
+      ),
+      statistics:bestStatSettings(days,{
+        horizon:+$("statHorizon")?.value||21,
+        model:$("statModel")?.value||"auto"
+      })
+    };
+  }
+
+  return Object.freeze({
+    detect,
+    diagnose,
+    bestValidationSettings,
+    bestAdvisorSettings,
+    bestStatSettings,
+    modes:()=>MODES.map(mode=>({...mode}))
+  });
+})();
+
+function runAutoModeDiagnosis(){
+  const status=$("autoModeStatus");
+  if(!last.d){
+    status.className="status bad";
+    status.textContent="先にCSVを読み込み、「分析を開始」を押してください。";
+    return;
+  }
+
+  const diagnosis=DataAdaptiveMode.diagnose(last.d.length);
+  last.autoMode=diagnosis;
+  applyAutoModeToControls(diagnosis);
+  renderAutoMode(diagnosis);
+
+  status.className="status ok";
+  status.textContent=`${last.d.length}営業日を診断し、${diagnosis.current.label}を選択しました。`;
+}
+
+function applyAutoModeToControls(diagnosis){
+  const validation=diagnosis.validation;
+  if($("measureHorizon"))$("measureHorizon").value=String(validation.horizon);
+  if($("measureLookback")){
+    const option=[...$("measureLookback").options]
+      .find(item=>+item.value===validation.lookback);
+    if(option)$("measureLookback").value=String(validation.lookback);
+  }
+  if($("measureStep"))$("measureStep").value=String(validation.step);
+
+  const advisor=diagnosis.advisor;
+  if($("advisorHorizon")){
+    const option=[...$("advisorHorizon").options]
+      .find(item=>+item.value===advisor.horizon);
+    if(option)$("advisorHorizon").value=String(advisor.horizon);
+  }
+
+  const statistics=diagnosis.statistics;
+  if($("statHorizon")){
+    const option=[...$("statHorizon").options]
+      .find(item=>+item.value===statistics.horizon);
+    if(option)$("statHorizon").value=String(statistics.horizon);
+  }
+  if($("statLookback")){
+    const option=[...$("statLookback").options]
+      .find(item=>+item.value===statistics.lookback);
+    if(option)$("statLookback").value=String(statistics.lookback);
+  }
+  if($("statModel")){
+    const option=[...$("statModel").options]
+      .find(item=>item.value===statistics.model);
+    if(option)$("statModel").value=statistics.model;
+  }
+}
+
+function renderAutoMode(diagnosis){
+  const {current,next,days,remaining,progress}=diagnosis;
+
+  $("autoModeHero").innerHTML=`
+    <div class="automode-name ${current.className}">${current.label}</div>
+    <div class="automode-level">利用データ ${days}営業日</div>
+    <div class="small" style="margin-top:8px">${current.description}</div>`;
+
+  $("autoModeBar").innerHTML=`
+    <div class="scorebar"><span style="width:${current.score}%"></span></div>`;
+
+  $("autoModeComment").textContent=next
+    ?`現在は${current.label}で動作します。
+
+次の「${next.label}」まで、あと${remaining}営業日です。
+現在のデータで利用可能な最大設定へ自動調整します。`
+    :`フルAIを利用できます。長期検証と高精度設定を自動採用します。`;
+
+  const rows=[
+    {
+      feature:"予測精度測定",
+      setting:`${diagnosis.validation.horizon}日予測・${diagnosis.validation.lookback}日学習`,
+      adjusted:diagnosis.validation.adjusted
+    },
+    {
+      feature:"AI総合判断",
+      setting:`${diagnosis.advisor.horizon}日予測・${diagnosis.advisor.lookback}日学習`,
+      adjusted:diagnosis.advisor.adjusted
+    },
+    {
+      feature:"統計モデル",
+      setting:`${diagnosis.statistics.horizon}日予測・${diagnosis.statistics.lookback}日学習・${statModelLabel(diagnosis.statistics.model)}`,
+      adjusted:diagnosis.statistics.adjusted
+    }
+  ];
+
+  $("autoModeTable").innerHTML=`
+    <div class="tablewrap"><table>
+      <thead><tr><th>機能</th><th>自動設定</th><th>状態</th></tr></thead>
+      <tbody>${rows.map(row=>`
+        <tr>
+          <td>${row.feature}</td>
+          <td>${row.setting}</td>
+          <td class="${row.adjusted?"mode-adjusted":"mode-ok"}">
+            ${row.adjusted?"自動調整":"指定設定"}
+          </td>
+        </tr>`).join("")}</tbody>
+    </table></div>`;
+
+  $("autoModeAdvice").textContent=`エラーで停止する代わりに、現在のデータ量で実行可能な設定へ自動変更します。
+
+データが増えると、軽量AI → 標準AI → 高精度AI → フルAIへ自動移行します。`;
+
+  $("autoModeProgressCards").innerHTML=next
+    ?`<div class="card">
+        <div class="card-title">次のモード</div>
+        <div class="card-value">${next.label}</div>
+      </div>
+      <div class="card">
+        <div class="card-title">不足日数</div>
+        <div class="card-value">${remaining}営業日</div>
+      </div>
+      <div class="card">
+        <div class="card-title">進捗</div>
+        <div class="card-value">${progress.toFixed(0)}%</div>
+      </div>`
+    :`<div class="card">
+        <div class="card-title">モード</div>
+        <div class="card-value">最高設定</div>
+      </div>`;
+}
+
 document.querySelectorAll(".tab").forEach(button=>{
   button.onclick=()=>{
     document.querySelectorAll(".tab").forEach(item=>item.classList.remove("active"));
@@ -5445,7 +5786,7 @@ document.querySelectorAll(".tab").forEach(button=>{
     $(button.dataset.page).hidden=false;
   };
 });
-$("distFile").onchange=e=>load(e.target,"dist");$("growthFile").onchange=e=>load(e.target,"growth");$("analyze").onclick=analyze;$("runBacktest").onclick=runForecastValidation;$("runRegime").onclick=runRegimeAnalysis;$("runAdvisor").onclick=runIntegratedAdvisor;$("savePrediction").onclick=saveCurrentPrediction;$("evaluatePredictions").onclick=evaluateSavedPredictions;$("clearLearning").onclick=clearLearningData;$("runAccuracyMeasurement").onclick=runAccuracyMeasurement;$("runStatisticalEngine").onclick=runStatisticalForecast;$("runAdaptiveAI").onclick=runAdaptiveAI;$("resetAdaptiveAI").onclick=resetAdaptiveAI;$("runMonte").onclick=runMonte;$("compareMonte").onclick=compareMonteMethods;$("calcFire").onclick=calcFire;$("calcStress").onclick=renderStress;$("analyzeMarket").onclick=()=>{analyzeMarketEnvironment();if(last.d){renderOutlook();buildMorningBrief()}};$("recalcOutlook").onclick=renderOutlook;$("saveSnapshot").onclick=saveSnapshot;$("clearHistory").onclick=clearHistory;$("whatWouldIDo").onclick=buildWhatWouldIDo;$("saveMemo").onclick=saveDailyMemo;$("clearMemo").onclick=clearDailyMemo;$("download").onclick=download;
+$("distFile").onchange=e=>load(e.target,"dist");$("growthFile").onchange=e=>load(e.target,"growth");$("analyze").onclick=analyze;$("runBacktest").onclick=runForecastValidation;$("runRegime").onclick=runRegimeAnalysis;$("runAdvisor").onclick=runIntegratedAdvisor;$("savePrediction").onclick=saveCurrentPrediction;$("evaluatePredictions").onclick=evaluateSavedPredictions;$("clearLearning").onclick=clearLearningData;$("runAccuracyMeasurement").onclick=runAccuracyMeasurement;$("runStatisticalEngine").onclick=runStatisticalForecast;$("runAdaptiveAI").onclick=runAdaptiveAI;$("resetAdaptiveAI").onclick=resetAdaptiveAI;$("runAutoMode").onclick=runAutoModeDiagnosis;$("runMonte").onclick=runMonte;$("compareMonte").onclick=compareMonteMethods;$("calcFire").onclick=calcFire;$("calcStress").onclick=renderStress;$("analyzeMarket").onclick=()=>{analyzeMarketEnvironment();if(last.d){renderOutlook();buildMorningBrief()}};$("recalcOutlook").onclick=renderOutlook;$("saveSnapshot").onclick=saveSnapshot;$("clearHistory").onclick=clearHistory;$("whatWouldIDo").onclick=buildWhatWouldIDo;$("saveMemo").onclick=saveDailyMemo;$("clearMemo").onclick=clearDailyMemo;$("download").onclick=download;
 $("taxMode").onchange=e=>$("taxRate").disabled=e.target.value==="before";
 try{const s=JSON.parse(localStorage.getItem("wcm5")||"{}");if(s.start)$("startDate").value=s.start;if(s.initial!=null)$("initial").value=s.initial;if(s.monthly!=null)$("monthly").value=s.monthly;if(s.day)$("day").value=s.day;if(s.taxMode)$("taxMode").value=s.taxMode;if(s.taxRate)$("taxRate").value=s.taxRate}catch(_){}
 if("serviceWorker"in navigator)navigator.serviceWorker.register("./sw.js").catch(()=>{});
