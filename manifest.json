@@ -1,11 +1,11 @@
 {
-  "name": "WCM Analyzer Pro Ver.16",
+  "name": "WCM Analyzer Pro Ver.17",
   "short_name": "WCM Analyzer",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#07101d",
   "theme_color": "#08111f",
-  "description": "予測履歴、実績照合、モデル成績、学習済み重みを搭載",
+  "description": "過去データを使った予測精度測定、局面別・期間別評価を搭載",
   "icons": [
     {
       "src": "./icon-192.svg",

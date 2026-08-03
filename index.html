@@ -12,15 +12,15 @@
   <meta name="apple-mobile-web-app-title" content="WCM Analyzer">
   <link rel="manifest" href="./manifest.json">
   <link rel="apple-touch-icon" href="./icon-192.svg">
-  <title>WCM Analyzer Pro Ver.16</title>
+  <title>WCM Analyzer Pro Ver.17</title>
 <link rel="stylesheet" href="./style.css?v=8">
 </head>
 <body>
 <main class="app">
 <header>
   <h1>WCM Analyzer Pro</h1>
-  <span class="badge">iPhone Edition Ver.16</span>
-  <p class="lead">CSVは端末内だけで処理します。Ver.12では、Ver.16では、予測履歴を保存し、更新後のCSVと実績を照合して、モデル成績と学習済み重みを自動更新します。</p>
+  <span class="badge">iPhone Edition Ver.17</span>
+  <p class="lead">CSVは端末内だけで処理します。Ver.12では、Ver.17では、過去データ全体を使った予測精度測定モードを追加し、方向的中率、誤差、区間カバー率、相場局面別の精度を実測します。</p>
 </header>
 
 <section class="panel">
@@ -60,6 +60,7 @@
     <button class="tab" data-page="regime">相場局面</button>
     <button class="tab" data-page="advisor">総合判断</button>
     <button class="tab" data-page="learning">AI学習</button>
+    <button class="tab" data-page="measurement">精度測定</button>
     <button class="tab" data-page="monte">モンテカルロ</button>
     <button class="tab" data-page="stress">暴落テスト</button>
     <button class="tab" data-page="fire">FIRE診断</button>
@@ -480,6 +481,33 @@
         予測を保存し、後日CSVを更新して実績照合を行ってください。
       </div>
     </div>
+  </section>
+
+  <section id="measurement" class="page" hidden>
+    <div class="panel">
+      <h2>予測精度測定モード</h2>
+      <p class="small">過去の各時点で、その時点までに分かっていたデータだけを使って予測し、その後の実績と比較します。</p>
+      <div class="grid">
+        <div class="field"><label>測定期間</label><select id="measureHorizon"><option value="5">1週間</option><option value="21" selected>1か月</option><option value="63">3か月</option><option value="126">半年</option></select></div>
+        <div class="field"><label>学習期間</label><select id="measureLookback"><option value="60">60営業日</option><option value="120" selected>120営業日</option><option value="252">252営業日</option><option value="504">504営業日</option></select></div>
+        <div class="field"><label>測定間隔</label><select id="measureStep"><option value="1">毎営業日</option><option value="5" selected>5営業日ごと</option><option value="10">10営業日ごと</option><option value="21">21営業日ごと</option></select></div>
+        <div class="field"><label>予測区間</label><select id="measureInterval"><option value="0.80">80%</option><option value="0.90" selected>90%</option><option value="0.95">95%</option></select></div>
+      </div>
+      <button id="runAccuracyMeasurement" class="primary">予測精度を測定</button>
+      <div id="measurementStatus" class="status" style="margin-top:14px">CSV分析後に「予測精度を測定」を押してください。</div>
+    </div>
+    <div class="panel accuracy-hero">
+      <h2>現在の予測精度</h2>
+      <div id="measurementHero"></div>
+      <div id="measurementScoreBar" style="margin-top:14px"></div>
+      <div id="measurementSummary" class="comment" style="margin-top:14px">測定結果をここに表示します。</div>
+    </div>
+    <div class="panel"><h2>主要指標</h2><div id="measurementCards" class="cards"></div></div>
+    <div class="panel"><h2>モデル別精度</h2><div id="measurementModelTable"></div></div>
+    <div class="panel"><h2>相場局面別の精度</h2><div id="measurementRegimeTable"></div><div id="measurementRegimeComment" class="comment" style="margin-top:14px"></div></div>
+    <div class="panel"><h2>期間別の精度</h2><div id="measurementPeriodTable"></div></div>
+    <div class="panel"><h2>予測と実績</h2><div id="measurementChart" class="chart"></div></div>
+    <div class="panel"><h2>精度評価レポート</h2><div id="measurementReport" class="comment">精度測定後、現在の予測をどの程度信頼できるか表示します。</div></div>
   </section>
 
   <section id="monte" class="page" hidden>

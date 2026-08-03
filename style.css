@@ -296,3 +296,8 @@ textarea{
   font-size:12px;
   line-height:1.7;
 }
+
+.accuracy-hero{background:radial-gradient(circle at top right,rgba(168,85,247,.18),transparent 38%),var(--panel)}
+.measurement-score{font-size:54px;font-weight:950;line-height:1;letter-spacing:-2px}
+.measurement-grade{margin-top:8px;font-size:24px;font-weight:900}
+.measurement-excellent{color:#86efac}.measurement-good{color:#bef264}.measurement-fair{color:#fde68a}.measurement-weak{color:#fdba74}.measurement-poor{color:#fca5a5}
