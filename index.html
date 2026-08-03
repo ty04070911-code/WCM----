@@ -12,15 +12,15 @@
   <meta name="apple-mobile-web-app-title" content="WCM Analyzer">
   <link rel="manifest" href="./manifest.json">
   <link rel="apple-touch-icon" href="./icon-192.svg">
-  <title>WCM Analyzer Pro Ver.17</title>
+  <title>WCM Analyzer Pro Ver.18</title>
 <link rel="stylesheet" href="./style.css?v=8">
 </head>
 <body>
 <main class="app">
 <header>
   <h1>WCM Analyzer Pro</h1>
-  <span class="badge">iPhone Edition Ver.17</span>
-  <p class="lead">CSVは端末内だけで処理します。Ver.12では、Ver.17では、過去データ全体を使った予測精度測定モードを追加し、方向的中率、誤差、区間カバー率、相場局面別の精度を実測します。</p>
+  <span class="badge">iPhone Edition Ver.18</span>
+  <p class="lead">CSVは端末内だけで処理します。Ver.12では、Ver.18では、GARCH風ボラティリティ予測、t分布、レジーム切替、自動モデル選択、精度加重アンサンブルを追加しました。</p>
 </header>
 
 <section class="panel">
@@ -61,6 +61,7 @@
     <button class="tab" data-page="advisor">総合判断</button>
     <button class="tab" data-page="learning">AI学習</button>
     <button class="tab" data-page="measurement">精度測定</button>
+    <button class="tab" data-page="statistics">統計モデル</button>
     <button class="tab" data-page="monte">モンテカルロ</button>
     <button class="tab" data-page="stress">暴落テスト</button>
     <button class="tab" data-page="fire">FIRE診断</button>
@@ -508,6 +509,86 @@
     <div class="panel"><h2>期間別の精度</h2><div id="measurementPeriodTable"></div></div>
     <div class="panel"><h2>予測と実績</h2><div id="measurementChart" class="chart"></div></div>
     <div class="panel"><h2>精度評価レポート</h2><div id="measurementReport" class="comment">精度測定後、現在の予測をどの程度信頼できるか表示します。</div></div>
+  </section>
+
+  <section id="statistics" class="page" hidden>
+    <div class="panel">
+      <h2>本格統計エンジン Ver.18</h2>
+      <p class="small">
+        直近の変動率、裾の厚さ、相場局面、過去の測定精度を組み合わせて、
+        現在に適した予測モデルと予測範囲を作成します。
+      </p>
+
+      <div class="grid">
+        <div class="field">
+          <label>予測期間</label>
+          <select id="statHorizon">
+            <option value="5">1週間</option>
+            <option value="21" selected>1か月</option>
+            <option value="63">3か月</option>
+            <option value="126">半年</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>学習期間</label>
+          <select id="statLookback">
+            <option value="120">120営業日</option>
+            <option value="252" selected>252営業日</option>
+            <option value="504">504営業日</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>モデル選択</label>
+          <select id="statModel">
+            <option value="auto" selected>自動選択</option>
+            <option value="garch">GARCH風</option>
+            <option value="student-t">t分布</option>
+            <option value="regime">レジーム切替</option>
+            <option value="ensemble">精度加重アンサンブル</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>信頼区間</label>
+          <select id="statInterval">
+            <option value="0.80">80%</option>
+            <option value="0.90" selected>90%</option>
+            <option value="0.95">95%</option>
+          </select>
+        </div>
+      </div>
+
+      <button id="runStatisticalEngine" class="primary">統計予測を実行</button>
+      <div id="statStatus" class="status" style="margin-top:14px">
+        CSV分析後に「統計予測を実行」を押してください。
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>自動選択結果</h2>
+      <div id="statChoiceCards" class="cards"></div>
+      <div id="statChoiceComment" class="comment" style="margin-top:14px"></div>
+    </div>
+
+    <div class="panel">
+      <h2>統計予測</h2>
+      <div id="statForecastCards" class="cards"></div>
+      <div id="statChart" class="chart" style="margin-top:14px"></div>
+    </div>
+
+    <div class="panel">
+      <h2>モデル比較</h2>
+      <div id="statModelTable"></div>
+      <div id="statModelComment" class="comment" style="margin-top:14px"></div>
+    </div>
+
+    <div class="panel">
+      <h2>ボラティリティ診断</h2>
+      <div id="statRiskCards" class="cards"></div>
+      <div id="statRiskComment" class="comment" style="margin-top:14px"></div>
+    </div>
   </section>
 
   <section id="monte" class="page" hidden>

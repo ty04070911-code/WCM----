@@ -301,3 +301,12 @@ textarea{
 .measurement-score{font-size:54px;font-weight:950;line-height:1;letter-spacing:-2px}
 .measurement-grade{margin-top:8px;font-size:24px;font-weight:900}
 .measurement-excellent{color:#86efac}.measurement-good{color:#bef264}.measurement-fair{color:#fde68a}.measurement-weak{color:#fdba74}.measurement-poor{color:#fca5a5}
+
+
+/* Ver.18 Statistical Engine */
+.stat-auto{color:#86efac;font-weight:900}
+.stat-caution{color:#fde68a;font-weight:900}
+.stat-risk{color:#fca5a5;font-weight:900}
+.stat-model-selected{
+  background:rgba(34,197,94,.08);
+}
