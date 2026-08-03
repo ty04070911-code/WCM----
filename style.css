@@ -367,3 +367,12 @@ textarea{
 .mode-ok{color:#86efac;font-weight:900}
 .mode-adjusted{color:#fde68a;font-weight:900}
 .mode-unavailable{color:#fca5a5;font-weight:900}
+
+.auto-data-panel{border-color:#2563eb}
+.future-chart{min-height:340px;border:1px solid var(--line);border-radius:16px;overflow:hidden;background:#f8fafc}
+.future-chart svg{display:block;width:100%;height:340px}
+.future-legend{display:flex;flex-wrap:wrap;gap:12px;margin-top:10px;color:var(--muted);font-size:12px}
+.future-legend span{display:inline-flex;align-items:center;gap:6px}
+.future-legend i{display:inline-block;width:18px;height:4px;border-radius:999px}
+.auto-data-ready{color:#86efac;font-weight:900}
+.auto-data-error{color:#fca5a5;font-weight:900}

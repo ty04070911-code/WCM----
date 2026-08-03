@@ -12,16 +12,27 @@
   <meta name="apple-mobile-web-app-title" content="WCM Analyzer">
   <link rel="manifest" href="./manifest.json">
   <link rel="apple-touch-icon" href="./icon-192.svg">
-  <title>WCM Analyzer Pro Ver.20</title>
-<link rel="stylesheet" href="./style.css?v=8">
+  <title>WCM Analyzer Pro Ver.21</title>
+<link rel="stylesheet" href="./style.css?v=21">
 </head>
 <body>
 <main class="app">
 <header>
   <h1>WCM Analyzer Pro</h1>
-  <span class="badge">iPhone Edition Ver.20</span>
-  <p class="lead">CSVは端末内だけで処理します。Ver.12では、Ver.20では、CSVのデータ量を自動診断し、簡易・軽量・標準・高精度・フルAIへ自動切替するデータ適応モードを追加しました。</p>
+  <span class="badge">iPhone Edition Ver.21</span>
+  <p class="lead">Ver.21では、公式CSVの自動更新と、実績から将来予測へつながる基準価額予想チャートを追加しました。</p>
 </header>
+
+<section class="panel auto-data-panel">
+  <h2>公式CSV自動更新</h2>
+  <p class="small">GitHub Actionsが公式ページから取得した最新CSVを読み込みます。失敗時も手動CSVを利用できます。</p>
+  <div class="grid">
+    <button id="loadAutoData" class="green">最新データを自動読込</button>
+    <button id="analyzeAutoData" class="primary" disabled>自動データで分析開始</button>
+  </div>
+  <div id="autoDataStatus" class="status" style="margin-top:14px">自動データを確認しています…</div>
+  <div id="autoDataMeta" class="small" style="margin-top:8px"></div>
+</section>
 
 <section class="panel">
   <h2>CSVと投資条件</h2>
@@ -199,7 +210,24 @@
   </section>
 
   <section id="forecast" class="page" hidden>
-    <div class="panel"><h2>基準価額予測</h2><div id="forecastCards" class="forecasts"></div><p class="small">過去120営業日の平均収益率と変動率を使用した統計モデルです。</p></div>
+    <div class="panel">
+      <h2>基準価額予測</h2>
+      <div id="forecastCards" class="forecasts"></div>
+      <p class="small">過去データを基礎にした統計的な参考予測で、将来の成果を保証しません。</p>
+    </div>
+    <div class="panel">
+      <h2>今後の基準価額予想チャート</h2>
+      <div class="grid">
+        <div class="field"><label>予測期間</label><select id="futureChartHorizon"><option value="21" selected>1か月</option><option value="63">3か月</option><option value="126">半年</option><option value="252">1年</option></select></div>
+        <div class="field"><label>予測モデル</label><select id="futureChartModel"><option value="auto" selected>自動選択</option><option value="ensemble">精度加重アンサンブル</option><option value="garch">GARCH風</option><option value="student-t">t分布</option><option value="regime">レジーム切替</option></select></div>
+        <div class="field"><label>表示する実績期間</label><select id="futureHistoryDays"><option value="63">3か月</option><option value="126" selected>半年</option><option value="252">1年</option><option value="504">2年</option></select></div>
+      </div>
+      <button id="renderFutureChart" class="primary">予想チャートを更新</button>
+      <div id="futureChartStatus" class="status" style="margin-top:14px">分析後に予想チャートを作成できます。</div>
+      <div id="futureNavChart" class="future-chart" style="margin-top:14px"></div>
+      <div id="futureChartLegend" class="future-legend"></div>
+      <div id="futureChartComment" class="comment" style="margin-top:14px"></div>
+    </div>
     <div class="panel"><h2>次回分配金予測</h2><div id="distributionForecast"></div></div>
     <div class="panel"><h2>基準価額比較</h2><div id="navChart" class="chart"></div></div>
   </section>
@@ -860,6 +888,6 @@
 </section>
 </main>
 
-<script src="./app.js?v=12" defer></script>
+<script src="./app.js?v=21" defer></script>
 </body>
 </html>
