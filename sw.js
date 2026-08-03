@@ -1,4 +1,4 @@
-const CACHE="wcm-analyzer-v22-1-actions-stable";
+const CACHE="wcm-analyzer-v22-2-iphone-root";
 const ASSETS=[
   "./",
   "./index.html",
@@ -31,11 +31,19 @@ self.addEventListener("fetch",event=>{
   if(event.request.method!=="GET")return;
 
   const url=new URL(event.request.url);
-  if(url.origin===self.location.origin&&url.pathname.includes("/data/")){
+  const isRootData=
+    url.origin===self.location.origin&&
+    (
+      url.pathname.endsWith("/wcm_distribution.csv")||
+      url.pathname.endsWith("/wcm_growth.csv")||
+      url.pathname.endsWith("/update-info.json")
+    );
+
+  if(isRootData){
     event.respondWith(
       fetch(event.request,{cache:"no-store"})
         .then(response=>{
-          if(!response||!response.ok)throw new Error("data fetch failed");
+          if(!response||!response.ok)throw new Error("root data fetch failed");
           return response;
         })
         .catch(()=>caches.match(event.request))
