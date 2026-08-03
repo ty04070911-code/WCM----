@@ -1,4 +1,4 @@
-const CACHE="wcm-analyzer-v18-statistical-engine";
+const CACHE="wcm-analyzer-v19-adaptive-ai";
 const ASSETS=[
   "./",
   "./index.html",
