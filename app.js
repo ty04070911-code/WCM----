@@ -1,5 +1,5 @@
 "use strict";
-const APP_VERSION="22.2";
+const APP_VERSION="22.2.1";
 
 /* =========================================================
    Ver.12 Integrated Professional Monte Carlo Engine
@@ -562,6 +562,41 @@ function median(values){
     :(clean[middle-1]+clean[middle])/2;
 }
 function sd(a){if(a.length<2)return 0;const m=mean(a);return Math.sqrt(a.reduce((s,v)=>s+(v-m)**2,0)/(a.length-1))}
+
+function variance(a,sample=true){
+  if(a.length<(sample?2:1))return 0;
+  const m=mean(a);
+  return a.reduce((s,v)=>s+(v-m)**2,0)/(sample?a.length-1:a.length);
+}
+function skewness(a){
+  if(a.length<3)return 0;
+  const m=mean(a);
+  const sigma=Math.sqrt(Math.max(variance(a,false),0));
+  if(!sigma)return 0;
+  return mean(a.map(v=>(v-m)**3))/(sigma**3);
+}
+function excessKurtosis(a){
+  if(a.length<4)return 0;
+  const m=mean(a);
+  const sigma=Math.sqrt(Math.max(variance(a,false),0));
+  if(!sigma)return 0;
+  return mean(a.map(v=>(v-m)**4))/(sigma**4)-3;
+}
+function autocorrelation(a,lag=1){
+  if(a.length<=lag)return 0;
+  const m=mean(a);
+  let numerator=0;
+  let denominator=0;
+  for(let i=0;i<a.length;i++){
+    const centered=a[i]-m;
+    denominator+=centered*centered;
+    if(i>=lag){
+      numerator+=centered*(a[i-lag]-m);
+    }
+  }
+  return denominator?numerator/denominator:0;
+}
+
 function returns(rows){const a=[];for(let i=1;i<rows.length;i++)if(rows[i-1].nav>0)a.push(rows[i].nav/rows[i-1].nav-1);return a}
 function cagr(rows){const days=(rows.at(-1).date-rows[0].date)/86400000;return days>0?((rows.at(-1).nav/rows[0].nav)**(365.25/days)-1)*100:0}
 function mdd(rows){let h=-Infinity,w=0;for(const r of rows){h=Math.max(h,r.nav);w=Math.min(w,r.nav/h-1)}return w*100}

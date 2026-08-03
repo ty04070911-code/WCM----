@@ -1,4 +1,4 @@
-const CACHE="wcm-analyzer-v22-2-iphone-root";
+const CACHE="wcm-analyzer-v22-2-1-chart-fix";
 const ASSETS=[
   "./",
   "./index.html",
