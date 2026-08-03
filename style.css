@@ -310,3 +310,35 @@ textarea{
 .stat-model-selected{
   background:rgba(34,197,94,.08);
 }
+
+
+/* Ver.19 Adaptive AI */
+.adaptive-hero{
+  background:
+    radial-gradient(circle at top right,rgba(34,197,94,.18),transparent 38%),
+    var(--panel);
+}
+.adaptive-score{
+  font-size:54px;
+  font-weight:950;
+  line-height:1;
+  letter-spacing:-2px;
+}
+.adaptive-state{
+  margin-top:8px;
+  font-size:22px;
+  font-weight:900;
+}
+.adaptive-history-item{
+  padding:12px;
+  margin-bottom:10px;
+  border-radius:14px;
+  border:1px solid var(--line);
+  background:#17243a;
+}
+.adaptive-history-head{
+  display:flex;
+  justify-content:space-between;
+  gap:10px;
+  font-weight:900;
+}

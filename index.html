@@ -12,15 +12,15 @@
   <meta name="apple-mobile-web-app-title" content="WCM Analyzer">
   <link rel="manifest" href="./manifest.json">
   <link rel="apple-touch-icon" href="./icon-192.svg">
-  <title>WCM Analyzer Pro Ver.18</title>
+  <title>WCM Analyzer Pro Ver.19</title>
 <link rel="stylesheet" href="./style.css?v=8">
 </head>
 <body>
 <main class="app">
 <header>
   <h1>WCM Analyzer Pro</h1>
-  <span class="badge">iPhone Edition Ver.18</span>
-  <p class="lead">CSVは端末内だけで処理します。Ver.12では、Ver.18では、GARCH風ボラティリティ予測、t分布、レジーム切替、自動モデル選択、精度加重アンサンブルを追加しました。</p>
+  <span class="badge">iPhone Edition Ver.19</span>
+  <p class="lead">CSVは端末内だけで処理します。Ver.12では、Ver.19では、最近の予測成績を重視し、相場局面別・予測期間別にモデル重みを自動更新するAdaptive AIを追加しました。</p>
 </header>
 
 <section class="panel">
@@ -62,6 +62,7 @@
     <button class="tab" data-page="learning">AI学習</button>
     <button class="tab" data-page="measurement">精度測定</button>
     <button class="tab" data-page="statistics">統計モデル</button>
+    <button class="tab" data-page="adaptive">Adaptive AI</button>
     <button class="tab" data-page="monte">モンテカルロ</button>
     <button class="tab" data-page="stress">暴落テスト</button>
     <button class="tab" data-page="fire">FIRE診断</button>
@@ -588,6 +589,83 @@
       <h2>ボラティリティ診断</h2>
       <div id="statRiskCards" class="cards"></div>
       <div id="statRiskComment" class="comment" style="margin-top:14px"></div>
+    </div>
+  </section>
+
+  <section id="adaptive" class="page" hidden>
+    <div class="panel">
+      <h2>Adaptive AI 自己学習</h2>
+      <p class="small">
+        最近の予測ほど大きく評価し、相場局面・予測期間ごとにモデル重みを更新します。
+        Ver.16の保存予測とVer.17の精度測定を組み合わせて学習します。
+      </p>
+
+      <div class="grid">
+        <div class="field">
+          <label>学習対象期間</label>
+          <select id="adaptiveHorizon">
+            <option value="5">1週間</option>
+            <option value="21" selected>1か月</option>
+            <option value="63">3か月</option>
+            <option value="126">半年</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>最近の成績の重視度</label>
+          <select id="adaptiveDecay">
+            <option value="0.90">強く重視</option>
+            <option value="0.96" selected>標準</option>
+            <option value="0.99">ゆるやか</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>最低学習件数</label>
+          <select id="adaptiveMinimum">
+            <option value="3">3件</option>
+            <option value="5" selected>5件</option>
+            <option value="10">10件</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="grid">
+        <button id="runAdaptiveAI" class="primary">Adaptive AIを学習</button>
+        <button id="resetAdaptiveAI" class="gray">Adaptive AIを初期化</button>
+      </div>
+
+      <div id="adaptiveStatus" class="status" style="margin-top:14px">
+        保存済み予測や精度測定結果を使って学習できます。
+      </div>
+    </div>
+
+    <div class="panel adaptive-hero">
+      <h2>現在のAI状態</h2>
+      <div id="adaptiveHero"></div>
+      <div id="adaptiveConfidenceBar" style="margin-top:14px"></div>
+      <div id="adaptiveComment" class="comment" style="margin-top:14px"></div>
+    </div>
+
+    <div class="panel">
+      <h2>現在のモデル重み</h2>
+      <div id="adaptiveWeights"></div>
+      <div id="adaptiveWeightComment" class="comment" style="margin-top:14px"></div>
+    </div>
+
+    <div class="panel">
+      <h2>相場局面別の得意モデル</h2>
+      <div id="adaptiveRegimeTable"></div>
+    </div>
+
+    <div class="panel">
+      <h2>予測期間別の得意モデル</h2>
+      <div id="adaptiveHorizonTable"></div>
+    </div>
+
+    <div class="panel">
+      <h2>学習履歴</h2>
+      <div id="adaptiveHistory"></div>
     </div>
   </section>
 
