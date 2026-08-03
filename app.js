@@ -1,5 +1,5 @@
 "use strict";
-const APP_VERSION="16.0";
+const APP_VERSION="17.0";
 
 /* =========================================================
    Ver.12 Integrated Professional Monte Carlo Engine
@@ -856,6 +856,8 @@ function analyze(){
     const ds=simDist(d,initial,monthly,day,tax),gs=simGrowth(g,initial,monthly,day);
     const rs=[result("分配金受取",ds.principal,ds.total),result("分配金再投資",ds.principal,ds.reinvest),result("資産成長型",gs.principal,gs.value)];
     last={d,g,ds,gs,rs};
+    $("measurementStatus").className="status";
+    $("measurementStatus").textContent="分析データを更新しました。「予測精度を測定」を押してください。";
     $("advisorStatus").className="status";
     $("advisorStatus").textContent="分析データを更新しました。「総合判断を実行」を押してください。";
     $("regimeStatus").className="status";
@@ -4312,6 +4314,206 @@ MAPE ${summary.integratedMape.toFixed(2)}%
   $("learningReport").textContent=report;
 }
 
+
+const AccuracyMeasurementEngine=(()=>{
+  const models=[
+    {id:"historical",label:"過去平均"},
+    {id:"ewma",label:"EWMA"},
+    {id:"momentum",label:"モメンタム"},
+    {id:"mean-reversion",label:"平均回帰"},
+    {id:"equal-ensemble",label:"均等アンサンブル"}
+  ];
+
+  function grade(score){
+    if(score>=85)return {grade:"S",label:"非常に高い"};
+    if(score>=75)return {grade:"A",label:"高い"};
+    if(score>=65)return {grade:"B",label:"比較的良好"};
+    if(score>=55)return {grade:"C",label:"標準"};
+    if(score>=40)return {grade:"D",label:"低め"};
+    return {grade:"E",label:"不十分"};
+  }
+
+  function calcMetrics(records,targetCoverage){
+    if(!records.length)return {count:0,mape:0,rmsePct:0,biasPct:0,directionHit:0,coverage:0,score:0};
+    const errors=records.map(r=>Math.abs(r.predicted-r.actual)/r.actual*100);
+    const signed=records.map(r=>(r.predicted-r.actual)/r.actual*100);
+    const directionHit=records.filter(r=>Math.sign(r.predicted-r.origin)===Math.sign(r.actual-r.origin)).length/records.length*100;
+    const coverage=records.filter(r=>r.actual>=r.low&&r.actual<=r.high).length/records.length*100;
+    const mape=mean(errors);
+    const rmsePct=Math.sqrt(mean(signed.map(v=>v*v)));
+    const biasPct=mean(signed);
+    const score=clamp(
+      clamp(100-mape*7,0,100)*.35+
+      clamp(100-rmsePct*5,0,100)*.20+
+      clamp((directionHit-45)*2.2,0,100)*.25+
+      clamp(100-Math.abs(coverage-targetCoverage)*3,0,100)*.12+
+      clamp(100-Math.abs(biasPct)*8,0,100)*.08,
+      0,100
+    );
+    return {count:records.length,mape,rmsePct,biasPct,directionHit,coverage,score};
+  }
+
+  function classify(trainingRows){
+    try{
+      const features=MarketRegimeEngine.featureVector(trainingRows.slice(-Math.min(63,trainingRows.length)));
+      return MarketRegimeEngine.classify(features).regime;
+    }catch{return "unknown"}
+  }
+
+  function run(rows,options={}){
+    const horizon=Math.max(1,+options.horizon||21);
+    const lookback=Math.max(60,+options.lookback||120);
+    const step=Math.max(1,+options.step||5);
+    const interval=clamp(+options.interval||.90,.5,.99);
+    const minimum=Math.max(lookback,63);
+    if(rows.length<minimum+horizon+20)throw new Error(`データ不足です。最低でも${minimum+horizon+20}営業日程度必要です。`);
+
+    const byModel=Object.fromEntries(models.map(m=>[m.id,[]]));
+    const integrated=[];
+    const byRegime={};
+    const byYear={};
+
+    for(let originIndex=minimum-1;originIndex+horizon<rows.length;originIndex+=step){
+      const training=rows.slice(Math.max(0,originIndex-lookback+1),originIndex+1);
+      const origin=rows[originIndex];
+      const actual=rows[originIndex+horizon];
+      const predictions=ForecastValidationEngine.predictAll(training,horizon,interval);
+      const regime=classify(training);
+      const records=[];
+
+      for(const model of models){
+        const p=predictions[model.id];
+        const record={modelId:model.id,modelLabel:model.label,date:origin.date,dateText:origin.dateText,origin:origin.nav,actual:actual.nav,actualDate:actual.dateText,predicted:p.center,low:p.low,high:p.high,regime};
+        byModel[model.id].push(record);
+        records.push(record);
+      }
+
+      const weights=LearningSystem.getModelWeights();
+      let center=0,low=0,high=0,total=0;
+      for(const r of records){
+        const w=weights?.[r.modelId]||1;
+        center+=r.predicted*w; low+=r.low*w; high+=r.high*w; total+=w;
+      }
+      const item={date:origin.date,dateText:origin.dateText,origin:origin.nav,actual:actual.nav,actualDate:actual.dateText,predicted:center/(total||1),low:low/(total||1),high:high/(total||1),regime};
+      integrated.push(item);
+      (byRegime[regime]??=[]).push(item);
+      const year=origin.date instanceof Date?origin.date.getFullYear():String(origin.dateText).slice(0,4);
+      (byYear[year]??=[]).push(item);
+    }
+
+    const modelResults=models.map(m=>({...m,metrics:calcMetrics(byModel[m.id],interval*100),records:byModel[m.id]})).sort((a,b)=>b.metrics.score-a.metrics.score);
+    const integratedMetrics=calcMetrics(integrated,interval*100);
+    const regimeResults=Object.entries(byRegime).map(([regime,records])=>({regime,metrics:calcMetrics(records,interval*100)})).sort((a,b)=>b.metrics.score-a.metrics.score);
+    const periodResults=Object.entries(byYear).map(([year,records])=>({year,metrics:calcMetrics(records,interval*100)})).sort((a,b)=>String(a.year).localeCompare(String(b.year)));
+    return {
+      horizon,lookback,step,interval,
+      integratedMetrics,integratedRecords:integrated,
+      modelResults,regimeResults,periodResults,
+      grade:grade(integratedMetrics.score),
+      bestModel:modelResults[0],weakestModel:modelResults.at(-1),
+      bestRegime:regimeResults[0],weakestRegime:regimeResults.at(-1),
+      sampleCount:integrated.length
+    };
+  }
+  return Object.freeze({run});
+})();
+
+function measurementClass(score){
+  if(score>=85)return "measurement-excellent";
+  if(score>=75)return "measurement-good";
+  if(score>=60)return "measurement-fair";
+  if(score>=45)return "measurement-weak";
+  return "measurement-poor";
+}
+
+function runAccuracyMeasurement(){
+  const status=$("measurementStatus");
+  if(!last.d){
+    status.className="status bad";
+    status.textContent="先にCSVを読み込み、「分析を開始」を押してください。";
+    return;
+  }
+  status.className="status";
+  status.textContent="過去データで予測を繰り返し、精度を測定しています…";
+  setTimeout(()=>{
+    try{
+      const result=AccuracyMeasurementEngine.run(last.d,{
+        horizon:+$("measureHorizon").value,
+        lookback:+$("measureLookback").value,
+        step:+$("measureStep").value,
+        interval:+$("measureInterval").value
+      });
+      last.measurement=result;
+      renderAccuracyMeasurement(result);
+      status.className="status ok";
+      status.textContent=`精度測定が完了しました。測定回数：${result.sampleCount}回`;
+    }catch(error){
+      console.error(error);
+      status.className="status bad";
+      status.textContent=`精度測定エラー：${error.message}`;
+    }
+  },50);
+}
+
+function renderAccuracyMeasurement(result){
+  const m=result.integratedMetrics;
+  $("measurementHero").innerHTML=`<div class="measurement-score ${measurementClass(m.score)}">${m.score.toFixed(0)}点</div><div class="measurement-grade">精度ランク ${result.grade.grade}</div><div class="small" style="margin-top:8px">${result.grade.label}・測定回数 ${result.sampleCount}回</div>`;
+  $("measurementScoreBar").innerHTML=`<div class="scorebar"><span style="width:${m.score}%"></span></div>`;
+  $("measurementCards").innerHTML=`
+    <div class="card"><div class="card-title">方向的中率</div><div class="card-value">${m.directionHit.toFixed(1)}%</div></div>
+    <div class="card"><div class="card-title">MAPE</div><div class="card-value">${m.mape.toFixed(2)}%</div></div>
+    <div class="card"><div class="card-title">RMSE</div><div class="card-value">${m.rmsePct.toFixed(2)}%</div></div>
+    <div class="card"><div class="card-title">区間カバー率</div><div class="card-value">${m.coverage.toFixed(1)}%</div></div>
+    <div class="card"><div class="card-title">予測バイアス</div><div class="card-value">${m.biasPct>=0?"+":""}${m.biasPct.toFixed(2)}%</div></div>
+    <div class="card"><div class="card-title">測定回数</div><div class="card-value">${result.sampleCount}</div></div>`;
+
+  $("measurementModelTable").innerHTML=`<div class="tablewrap"><table><thead><tr><th>モデル</th><th>精度点</th><th>MAPE</th><th>RMSE</th><th>方向的中</th><th>区間カバー</th><th>偏り</th></tr></thead><tbody>${result.modelResults.map(x=>`<tr><td>${x.label}</td><td class="${measurementClass(x.metrics.score)}">${x.metrics.score.toFixed(0)}点</td><td>${x.metrics.mape.toFixed(2)}%</td><td>${x.metrics.rmsePct.toFixed(2)}%</td><td>${x.metrics.directionHit.toFixed(1)}%</td><td>${x.metrics.coverage.toFixed(1)}%</td><td>${x.metrics.biasPct>=0?"+":""}${x.metrics.biasPct.toFixed(2)}%</td></tr>`).join("")}</tbody></table></div>`;
+
+  $("measurementRegimeTable").innerHTML=`<div class="tablewrap"><table><thead><tr><th>相場局面</th><th>件数</th><th>精度点</th><th>MAPE</th><th>方向的中</th><th>区間カバー</th></tr></thead><tbody>${result.regimeResults.map(x=>`<tr><td>${regimeLabel(x.regime)}</td><td>${x.metrics.count}</td><td class="${measurementClass(x.metrics.score)}">${x.metrics.score.toFixed(0)}点</td><td>${x.metrics.mape.toFixed(2)}%</td><td>${x.metrics.directionHit.toFixed(1)}%</td><td>${x.metrics.coverage.toFixed(1)}%</td></tr>`).join("")}</tbody></table></div>`;
+
+  $("measurementRegimeComment").textContent=`最も得意な局面：${regimeLabel(result.bestRegime?.regime||"unknown")}（${result.bestRegime?.metrics.score.toFixed(0)||0}点）
+最も苦手な局面：${regimeLabel(result.weakestRegime?.regime||"unknown")}（${result.weakestRegime?.metrics.score.toFixed(0)||0}点）`;
+
+  $("measurementPeriodTable").innerHTML=`<div class="tablewrap"><table><thead><tr><th>年</th><th>件数</th><th>精度点</th><th>MAPE</th><th>方向的中</th><th>区間カバー</th></tr></thead><tbody>${result.periodResults.map(x=>`<tr><td>${x.year}</td><td>${x.metrics.count}</td><td class="${measurementClass(x.metrics.score)}">${x.metrics.score.toFixed(0)}点</td><td>${x.metrics.mape.toFixed(2)}%</td><td>${x.metrics.directionHit.toFixed(1)}%</td><td>${x.metrics.coverage.toFixed(1)}%</td></tr>`).join("")}</tbody></table></div>`;
+
+  const recent=result.integratedRecords.slice(-Math.min(80,result.integratedRecords.length));
+  lineChart($("measurementChart"),[
+    {name:"実績",color:"#22c55e",values:recent.map(r=>r.actual)},
+    {name:"予測",color:"#3b82f6",values:recent.map(r=>r.predicted)}
+  ]);
+
+  let reliability=m.directionHit>=65&&m.mape<=5
+    ?"方向性と価格誤差の両方が良好で、比較的信頼できる水準です。"
+    :m.directionHit>=55&&m.mape<=10
+      ?"参考に使える水準ですが、単一の予測値へ依存しない方が安全です。"
+      :"予測の不確実性が高いため、予測値よりリスク範囲を重視してください。";
+
+  $("measurementSummary").textContent=`方向的中率 ${m.directionHit.toFixed(1)}%
+平均価格誤差 ${m.mape.toFixed(2)}%
+RMSE ${m.rmsePct.toFixed(2)}%
+${Math.round(result.interval*100)}%区間カバー率 ${m.coverage.toFixed(1)}%
+
+${reliability}`;
+
+  $("measurementReport").textContent=`予測精度評価レポート
+
+予測期間 ${result.horizon}営業日
+学習期間 ${result.lookback}営業日
+測定間隔 ${result.step}営業日
+測定回数 ${result.sampleCount}回
+
+総合精度 ${m.score.toFixed(0)}点・ランク${result.grade.grade}
+
+最優秀モデル：${result.bestModel.label}
+精度 ${result.bestModel.metrics.score.toFixed(0)}点
+MAPE ${result.bestModel.metrics.mape.toFixed(2)}%
+
+最も精度が低いモデル：${result.weakestModel.label}
+精度 ${result.weakestModel.metrics.score.toFixed(0)}点
+
+過去データでの精度であり、将来の精度を保証するものではありません。`;
+}
+
 document.querySelectorAll(".tab").forEach(button=>{
   button.onclick=()=>{
     document.querySelectorAll(".tab").forEach(item=>item.classList.remove("active"));
@@ -4320,7 +4522,7 @@ document.querySelectorAll(".tab").forEach(button=>{
     $(button.dataset.page).hidden=false;
   };
 });
-$("distFile").onchange=e=>load(e.target,"dist");$("growthFile").onchange=e=>load(e.target,"growth");$("analyze").onclick=analyze;$("runBacktest").onclick=runForecastValidation;$("runRegime").onclick=runRegimeAnalysis;$("runAdvisor").onclick=runIntegratedAdvisor;$("savePrediction").onclick=saveCurrentPrediction;$("evaluatePredictions").onclick=evaluateSavedPredictions;$("clearLearning").onclick=clearLearningData;$("runMonte").onclick=runMonte;$("compareMonte").onclick=compareMonteMethods;$("calcFire").onclick=calcFire;$("calcStress").onclick=renderStress;$("analyzeMarket").onclick=()=>{analyzeMarketEnvironment();if(last.d){renderOutlook();buildMorningBrief()}};$("recalcOutlook").onclick=renderOutlook;$("saveSnapshot").onclick=saveSnapshot;$("clearHistory").onclick=clearHistory;$("whatWouldIDo").onclick=buildWhatWouldIDo;$("saveMemo").onclick=saveDailyMemo;$("clearMemo").onclick=clearDailyMemo;$("download").onclick=download;
+$("distFile").onchange=e=>load(e.target,"dist");$("growthFile").onchange=e=>load(e.target,"growth");$("analyze").onclick=analyze;$("runBacktest").onclick=runForecastValidation;$("runRegime").onclick=runRegimeAnalysis;$("runAdvisor").onclick=runIntegratedAdvisor;$("savePrediction").onclick=saveCurrentPrediction;$("evaluatePredictions").onclick=evaluateSavedPredictions;$("clearLearning").onclick=clearLearningData;$("runAccuracyMeasurement").onclick=runAccuracyMeasurement;$("runMonte").onclick=runMonte;$("compareMonte").onclick=compareMonteMethods;$("calcFire").onclick=calcFire;$("calcStress").onclick=renderStress;$("analyzeMarket").onclick=()=>{analyzeMarketEnvironment();if(last.d){renderOutlook();buildMorningBrief()}};$("recalcOutlook").onclick=renderOutlook;$("saveSnapshot").onclick=saveSnapshot;$("clearHistory").onclick=clearHistory;$("whatWouldIDo").onclick=buildWhatWouldIDo;$("saveMemo").onclick=saveDailyMemo;$("clearMemo").onclick=clearDailyMemo;$("download").onclick=download;
 $("taxMode").onchange=e=>$("taxRate").disabled=e.target.value==="before";
 try{const s=JSON.parse(localStorage.getItem("wcm5")||"{}");if(s.start)$("startDate").value=s.start;if(s.initial!=null)$("initial").value=s.initial;if(s.monthly!=null)$("monthly").value=s.monthly;if(s.day)$("day").value=s.day;if(s.taxMode)$("taxMode").value=s.taxMode;if(s.taxRate)$("taxRate").value=s.taxRate}catch(_){}
 if("serviceWorker"in navigator)navigator.serviceWorker.register("./sw.js").catch(()=>{});
