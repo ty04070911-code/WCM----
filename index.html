@@ -12,15 +12,15 @@
   <meta name="apple-mobile-web-app-title" content="WCM Analyzer">
   <link rel="manifest" href="./manifest.json">
   <link rel="apple-touch-icon" href="./icon-192.svg">
-  <title>WCM Analyzer Pro Ver.15</title>
+  <title>WCM Analyzer Pro Ver.16</title>
 <link rel="stylesheet" href="./style.css?v=8">
 </head>
 <body>
 <main class="app">
 <header>
   <h1>WCM Analyzer Pro</h1>
-  <span class="badge">iPhone Edition Ver.15</span>
-  <p class="lead">CSVは端末内だけで処理します。Ver.12では、Ver.15では、相場局面・精度検証・モンテカルロを統合し、総合スコア、推奨行動、信頼度、根拠を1画面にまとめました。</p>
+  <span class="badge">iPhone Edition Ver.16</span>
+  <p class="lead">CSVは端末内だけで処理します。Ver.12では、Ver.16では、予測履歴を保存し、更新後のCSVと実績を照合して、モデル成績と学習済み重みを自動更新します。</p>
 </header>
 
 <section class="panel">
@@ -59,6 +59,7 @@
     <button class="tab" data-page="validation">精度検証</button>
     <button class="tab" data-page="regime">相場局面</button>
     <button class="tab" data-page="advisor">総合判断</button>
+    <button class="tab" data-page="learning">AI学習</button>
     <button class="tab" data-page="monte">モンテカルロ</button>
     <button class="tab" data-page="stress">暴落テスト</button>
     <button class="tab" data-page="fire">FIRE診断</button>
@@ -432,6 +433,52 @@
       <h2>総合リスク</h2>
       <div id="advisorRiskCards" class="cards"></div>
       <div id="advisorRiskComment" class="comment" style="margin-top:14px"></div>
+    </div>
+  </section>
+
+  <section id="learning" class="page" hidden>
+    <div class="panel">
+      <h2>AI学習システム</h2>
+      <p class="small">
+        総合判断の予測を端末内へ保存し、後日CSVを更新した際に実績と照合します。
+        成績の良いモデルほど、今後の統合判断で重みが大きくなります。
+      </p>
+
+      <div class="grid">
+        <button id="savePrediction" class="green">現在の予測を保存</button>
+        <button id="evaluatePredictions" class="primary">保存済み予測を実績照合</button>
+        <button id="clearLearning" class="gray">学習データを消去</button>
+      </div>
+
+      <div id="learningStatus" class="status" style="margin-top:14px">
+        総合判断を実行すると予測を保存できます。
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>学習サマリー</h2>
+      <div id="learningCards" class="cards"></div>
+      <div id="learningComment" class="comment" style="margin-top:14px">
+        まだ学習データはありません。
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>モデル成績表</h2>
+      <div id="learningTable"></div>
+      <div id="learningWeights" style="margin-top:14px"></div>
+    </div>
+
+    <div class="panel">
+      <h2>保存済み予測</h2>
+      <div id="predictionHistory"></div>
+    </div>
+
+    <div class="panel">
+      <h2>学習レポート</h2>
+      <div id="learningReport" class="comment">
+        予測を保存し、後日CSVを更新して実績照合を行ってください。
+      </div>
     </div>
   </section>
 
