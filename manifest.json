@@ -1,11 +1,11 @@
 {
-  "name": "WCM Analyzer Pro Ver.27.6",
+  "name": "WCM Analyzer Pro Ver.27.7",
   "short_name": "WCM Analyzer",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#07101d",
   "theme_color": "#08111f",
-  "description": "混合確率モデル＋個別元本追跡＋普通/特別分配分類エンジンv2",
+  "description": "混合確率モデル＋個別元本追跡＋普通/特別分配分類エンジンv3＋税引前/税引後精度比較",
   "icons": [
     {
       "src": "./icon-192.svg",

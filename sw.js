@@ -1,5 +1,5 @@
-const CACHE="wcm-analyzer-v276";
-const CORE=["./style.css?v=276","./app.js?v=276","./manifest.json"];
+const CACHE="wcm-analyzer-v27701";
+const CORE=["./style.css?v=27701","./app.js?v=27701","./manifest.json"];
 
 self.addEventListener("install",event=>{
   event.waitUntil(

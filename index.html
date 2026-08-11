@@ -12,15 +12,15 @@
   <meta name="apple-mobile-web-app-title" content="WCM Analyzer">
   <link rel="manifest" href="./manifest.json">
   <link rel="apple-touch-icon" href="./icon-192.svg">
-  <title>WCM Analyzer Pro Ver.27.6</title>
-<link rel="stylesheet" href="./style.css?v=27502">
+  <title>WCM Analyzer Pro Ver.27.7</title>
+<link rel="stylesheet" href="./style.css?v=27701">
 </head>
 <body>
 <main class="app">
 <header>
   <h1>WCM Analyzer Pro</h1>
-  <span class="badge">iPhone Edition Ver.27.6</span>
-  <p class="lead">Ver.27.6では、普通分配・特別分配を「分配後基準価額と分配直前の個別元本」で税務ルール判定する分類エンジンv2を搭載。分配日当日の買付順序と再投資の約定ラグも反映します。</p>
+  <span class="badge">iPhone Edition Ver.27.7</span>
+  <p class="lead">Ver.27.7では、普通分配・特別分配を「分配後基準価額と分配直前の個別元本」で税務ルール判定する分類エンジンv2を搭載。分配日当日の買付順序と再投資の約定ラグも反映します。</p>
 </header>
 
 <section class="panel auto-data-panel">
@@ -91,7 +91,7 @@
     <button class="tab" data-page="outlook">今後の見通し</button>
     <button class="tab" data-page="forecast">将来予測</button>
     <button class="tab" data-page="selflearning">自己学習AI</button>
-    <button class="tab" data-page="v25dashboard">Ver.27.6総合</button>
+    <button class="tab" data-page="v25dashboard">Ver.27.7総合</button>
     <button class="tab" data-page="validation">精度検証</button>
     <button class="tab" data-page="regime">相場局面</button>
     <button class="tab" data-page="advisor">総合判断</button>
@@ -816,7 +816,7 @@
 
   <section id="v25dashboard" class="page" hidden>
     <div class="panel v25-hero">
-      <h2>WCM AI統合ダッシュボード Ver.27.6</h2>
+      <h2>WCM AI統合ダッシュボード Ver.27.7</h2>
       <p class="small">
         積立元本、実際の積立日、分配金再投資、普通分配・特別分配の推定、
         4期間予測、自己学習結果をまとめて参考判断を作成します。
@@ -858,16 +858,19 @@
           <div class="field"><label>現在基準価額</label><input id="v25ActualNav" type="number" inputmode="decimal" min="0" step="1" value="12327"></div>
           <div class="field"><label>平均取得価額（1万口あたり）</label><input id="v25ActualAvgCost" type="number" inputmode="decimal" min="0" step="0.01" value="12691.03"></div>
           <div class="field"><label>取得総額</label><input id="v25ActualAcquisitionTotal" type="number" inputmode="numeric" min="0" step="1" value="2307608"></div>
-          <div class="field"><label>累計分配金（実績）</label><input id="v25ActualDistributionTotal" type="number" inputmode="numeric" min="0" step="1" value="115017"></div>
-          <div class="field"><label>普通分配金累計（実績）</label><input id="v25ActualOrdinaryDistribution" type="number" inputmode="numeric" min="0" step="1" value="33969"></div>
-          <div class="field"><label>特別分配金累計（実績）</label><input id="v25ActualSpecialDistribution" type="number" inputmode="numeric" min="0" step="1" value="81048"></div>
+          <div class="field"><label>分配金合計・税引前（実績）</label><input id="v25ActualGrossDistributionTotal" type="number" inputmode="numeric" min="0" step="1" value="123661"></div>
+          <div class="field"><label>普通分配・税引前（実績）</label><input id="v25ActualOrdinaryGrossDistribution" type="number" inputmode="numeric" min="0" step="1" value="42613"></div>
+          <div class="field"><label>源泉徴収税額（実績）</label><input id="v25ActualWithholdingTax" type="number" inputmode="numeric" min="0" step="1" value="8644"></div>
+          <div class="field"><label>分配金合計・税引後（実績）</label><input id="v25ActualDistributionTotal" type="number" inputmode="numeric" min="0" step="1" value="115017"></div>
+          <div class="field"><label>普通分配・税引後（実績）</label><input id="v25ActualOrdinaryDistribution" type="number" inputmode="numeric" min="0" step="1" value="33969"></div>
+          <div class="field"><label>特別分配（非課税・実績）</label><input id="v25ActualSpecialDistribution" type="number" inputmode="numeric" min="0" step="1" value="81048"></div>
           <div class="field"><label>トータルリターン（実績）</label><input id="v25ActualTotalReturn" type="number" inputmode="numeric" step="1" value="-31959"></div>
         </div>
-        <div id="v25ActualAnchorPreview" class="comment" style="margin-top:12px">実績優先：保有口数 × 現在基準価額で現在評価額を固定し、累計分配金の実績とAI推定を比較します。</div>
+        <div id="v25ActualAnchorPreview" class="comment" style="margin-top:12px">実績優先：現在値を固定し、税引前分配・源泉徴収税・税引後分配を同じ基準でAI推定と比較します。</div>
       </div>
 
       <div class="grid">
-        <button id="runV25Dashboard" class="primary">Ver.27.6総合分析を実行</button>
+        <button id="runV25Dashboard" class="primary">Ver.27.7総合分析を実行</button>
         <button id="exportV25Pdf" class="green" disabled>分析結果をPDF保存</button>
       </div>
 
@@ -926,7 +929,7 @@
     </div>
 
     <div class="panel">
-      <h2>Ver.27.6総合レポート</h2>
+      <h2>Ver.27.7総合レポート</h2>
       <div id="v25Report" class="comment"></div>
     </div>
   </section>
@@ -1093,6 +1096,6 @@
 </section>
 </main>
 
-<script src="./app.js?v=27502" defer></script>
+<script src="./app.js?v=27701" defer></script>
 </body>
 </html>
