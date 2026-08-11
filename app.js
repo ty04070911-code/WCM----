@@ -7208,7 +7208,7 @@ const V25DashboardEngine=(()=>{
       principal:0,costBasis:0,marketValue:0,cashDistributions:0,totalValue:0,units:0,nav:0
     };
 
-    // Ver.27.4: 証券会社の現在値をアンカーとして優先できる。
+    // Ver.27.5: 証券会社の現在値をアンカーとして優先できる。
     // 過去の積立・追加投資・分配履歴は分析用に再構築するが、
     // 現在評価額と現在の取得原価は実績値で上書きし、誤差の累積を将来へ持ち込まない。
     const actualMode=(config.actualMode||"estimated")==="actual";
@@ -7226,15 +7226,27 @@ const V25DashboardEngine=(()=>{
         const actualCostBasis=actualAcquisitionTotal>0
           ?actualAcquisitionTotal
           :(actualUnits>0&&actualAvgCost>0?actualUnits*actualAvgCost/10000:latest.costBasis);
+        const actualDistributionTotal=Math.max(0,Number(config.actualDistributionTotal)||0);
+        const actualOrdinaryDistribution=Math.max(0,Number(config.actualOrdinaryDistribution)||0);
+        const actualSpecialDistribution=Math.max(0,Number(config.actualSpecialDistribution)||0);
+        const actualTotalReturn=Number(config.actualTotalReturn)||0;
         actualAnchor={
           units:actualUnits,
           nav:actualNav,
           averageCostPer10000:actualAvgCost>0?actualAvgCost:(actualUnits>0?actualCostBasis/actualUnits*10000:0),
           acquisitionTotal:actualCostBasis,
           marketValue:actualMarketValue,
+          distributionTotal:actualDistributionTotal,
+          ordinaryDistribution:actualOrdinaryDistribution,
+          specialDistribution:actualSpecialDistribution,
+          totalReturn:actualTotalReturn,
+          distributionBreakdownGap:actualDistributionTotal-(actualOrdinaryDistribution+actualSpecialDistribution),
           estimatedMarketValue:latest.marketValue,
           estimatedUnits:latest.units,
-          estimatedCostBasis:latest.costBasis
+          estimatedCostBasis:latest.costBasis,
+          estimatedOrdinaryDistribution:ordinaryGross,
+          estimatedSpecialDistribution:specialGross,
+          estimatedDistributionTotal:ordinaryGross+specialGross
         };
         latest={
           ...latest,
@@ -7504,7 +7516,7 @@ const CrashBuyEngine=(()=>{
     years=Math.max(1,Math.floor(Number(years)||1));
     runs=Math.max(200,Math.floor(Number(runs)||3000));
 
-    // Ver.27.4: CSV最終日より後に登録された日付指定の追加投資を将来シミュレーションへ反映。
+    // Ver.27.5: CSV最終日より後に登録された日付指定の追加投資を将来シミュレーションへ反映。
     const latestDate=rows.at(-1).date;
     const futureExtras=normalizeExtraInvestments(extraInvestments).map(item=>{
       const d=new Date(item.date+"T00:00:00");
@@ -7682,7 +7694,7 @@ ${years}年以内に${yen(target)}へ到達する推定確率：${prob.probabili
 ${hitText}
 将来の指定追加投資：${prob.futureExtras.length}件・${yen(prob.futureExtras.reduce((s,x)=>s+x.amount,0))}
 
-Ver.27.4確率モデル：過去実績45%＋長期期待リターン40%（年率7%・ボラ22%）＋暴落ストレス15%を混合。過去実績成分は値動きの形だけを利用し、平均収益率は年率9%を上限として再中心化します。通常積立を毎月、−10/−15/−20/−25/−30/−40%の各段階の追加買付を1暴落局面につき1回だけ実行します。直近の好成績を10年先へそのまま外挿しない参考シミュレーションで、将来の成果を保証しません。`;
+Ver.27.5確率モデル：過去実績45%＋長期期待リターン40%（年率7%・ボラ22%）＋暴落ストレス15%を混合。過去実績成分は値動きの形だけを利用し、平均収益率は年率9%を上限として再中心化します。通常積立を毎月、−10/−15/−20/−25/−30/−40%の各段階の追加買付を1暴落局面につき1回だけ実行します。直近の好成績を10年先へそのまま外挿しない参考シミュレーションで、将来の成果を保証しません。`;
   }catch(error){
     console.error("暴落買いAIエラー",error);
     hero.innerHTML=`<div class="status bad">暴落買いAIエラー：${error.message}</div>`;
@@ -7708,7 +7720,11 @@ function runV25Dashboard(){
         actualUnits:+$("v25ActualUnits")?.value||0,
         actualNav:+$("v25ActualNav")?.value||0,
         actualAvgCost:+$("v25ActualAvgCost")?.value||0,
-        actualAcquisitionTotal:+$("v25ActualAcquisitionTotal")?.value||0
+        actualAcquisitionTotal:+$("v25ActualAcquisitionTotal")?.value||0,
+        actualDistributionTotal:+$("v25ActualDistributionTotal")?.value||0,
+        actualOrdinaryDistribution:+$("v25ActualOrdinaryDistribution")?.value||0,
+        actualSpecialDistribution:+$("v25ActualSpecialDistribution")?.value||0,
+        actualTotalReturn:+$("v25ActualTotalReturn")?.value||0
       });
 
       last.v25=result;
@@ -7717,7 +7733,8 @@ function runV25Dashboard(){
         const preview=$("v25ActualAnchorPreview");
         if(preview){
           const a=result.capital.actualAnchor;
-          preview.textContent=`実績アンカー適用：${Math.round(a.units).toLocaleString()}口 × 基準価額 ${Math.round(a.nav).toLocaleString()}円 → 現在評価額 ${yen(a.marketValue)}。取得原価 ${yen(a.acquisitionTotal)}。履歴推定評価額との差 ${yen(a.marketValue-a.estimatedMarketValue)}。`;
+          const distGap=a.distributionTotal-(a.ordinaryDistribution+a.specialDistribution);
+          preview.textContent=`実績アンカー適用：${Math.round(a.units).toLocaleString()}口 × 基準価額 ${Math.round(a.nav).toLocaleString()}円 → 現在評価額 ${yen(a.marketValue)}。取得原価 ${yen(a.acquisitionTotal)}。分配実績 ${yen(a.distributionTotal)}（普通 ${yen(a.ordinaryDistribution)}＋特別 ${yen(a.specialDistribution)}、内訳差 ${yen(distGap)}）。AI推定分配との差 ${yen(a.distributionTotal-a.estimatedDistributionTotal)}。`;
         }
       }else if($("v25ActualAnchorPreview")){
         $("v25ActualAnchorPreview").textContent="履歴推定モード：初期投資・積立・追加投資・分配再投資から現在値を再構築しています。";
@@ -7726,7 +7743,7 @@ function runV25Dashboard(){
       $("exportV25Pdf").disabled=false;
       status.className="status ok";
       renderCrashBuyAI();
-      status.textContent="Ver.27.4総合分析が完了しました。";
+      status.textContent="Ver.27.5総合分析が完了しました。";
     }catch(error){
       console.error("Ver.25総合分析エラー",error);
       status.className="status bad";
@@ -7845,6 +7862,30 @@ ${decisionText}
       <div class="card-title">現金分配金</div>
       <div class="card-value">${yen(latest.cashDistributions)}</div>
     </div>
+    ${result.capital.actualAnchor?`
+    <div class="card">
+      <div class="card-title">累計分配金（実績）</div>
+      <div class="card-value">${yen(result.capital.actualAnchor.distributionTotal)}</div>
+    </div>
+    <div class="card">
+      <div class="card-title">普通分配（実績）</div>
+      <div class="card-value">${yen(result.capital.actualAnchor.ordinaryDistribution)}</div>
+      <div class="card-sub">AI推定 ${yen(result.capital.ordinaryGross)} / 差 ${yen(result.capital.ordinaryGross-result.capital.actualAnchor.ordinaryDistribution)}</div>
+    </div>
+    <div class="card">
+      <div class="card-title">特別分配（実績）</div>
+      <div class="card-value">${yen(result.capital.actualAnchor.specialDistribution)}</div>
+      <div class="card-sub">AI推定 ${yen(result.capital.specialGross)} / 差 ${yen(result.capital.specialGross-result.capital.actualAnchor.specialDistribution)}</div>
+    </div>
+    <div class="card">
+      <div class="card-title">分配金AI推定誤差</div>
+      <div class="card-value">${yen(result.capital.actualAnchor.estimatedDistributionTotal-result.capital.actualAnchor.distributionTotal)}</div>
+      <div class="card-sub">実績 ${yen(result.capital.actualAnchor.distributionTotal)} / 推定 ${yen(result.capital.actualAnchor.estimatedDistributionTotal)}</div>
+    </div>
+    <div class="card">
+      <div class="card-title">トータルリターン（実績）</div>
+      <div class="card-value">${yen(result.capital.actualAnchor.totalReturn)}</div>
+    </div>`:`
     <div class="card">
       <div class="card-title">普通分配推定</div>
       <div class="card-value">${yen(result.capital.ordinaryGross)}</div>
@@ -7852,7 +7893,7 @@ ${decisionText}
     <div class="card">
       <div class="card-title">特別分配推定</div>
       <div class="card-value">${yen(result.capital.specialGross)}</div>
-    </div>
+    </div>`}
     <div class="card">
       <div class="card-title">普通分配の推定税額</div>
       <div class="card-value">${yen(result.capital.taxPaid)}</div>
@@ -7911,11 +7952,11 @@ ${decisionText}
 
 積立日は入力欄の「積立日」を使い、その日が休業日の場合はCSV上で同月の次の営業日、無ければ月末営業日に購入したものとして計算しています。
 
-${result.capital.actualAnchor?`Ver.27.4実績優先モード：現在評価額・保有口数・取得原価は証券会社の入力値を基準点として固定しています。履歴グラフの過去部分と普通/特別分配は推定値です。`:"履歴推定モード：現在値も取引履歴から再構築した推定値です。"}`;
+${result.capital.actualAnchor?`Ver.27.5実績優先モード：現在評価額・保有口数・取得原価に加え、累計分配金・普通分配・特別分配・トータルリターンも証券会社の入力値を実績アンカーとして表示します。履歴グラフと日別の普通/特別分配内訳は推定ですが、累計実績との差額を確認できます。分配実績は再投資済みの場合があるため、現在評価額へ単純加算してトータルリターンを再計算しません。`:"履歴推定モード：現在値も取引履歴から再構築した推定値です。"}`;
 
   renderV25ForecastActual(result.predictionActual);
 
-  $("v25Report").textContent=`WCM Analyzer Pro Ver.27.4 総合分析
+  $("v25Report").textContent=`WCM Analyzer Pro Ver.27.5 総合分析
 
 作成日時：
 ${new Date(result.createdAt).toLocaleString("ja-JP")}
@@ -7943,6 +7984,21 @@ ${result.capital.actualAnchor.averageCostPer10000.toLocaleString("ja-JP",{maximu
 
 取得総額：
 ${yen(result.capital.actualAnchor.acquisitionTotal)}
+
+累計分配金（実績）：
+${yen(result.capital.actualAnchor.distributionTotal)}
+
+普通分配（実績）：
+${yen(result.capital.actualAnchor.ordinaryDistribution)}
+
+特別分配（実績）：
+${yen(result.capital.actualAnchor.specialDistribution)}
+
+トータルリターン（実績）：
+${yen(result.capital.actualAnchor.totalReturn)}
+
+AI推定分配合計との差：
+${yen(result.capital.actualAnchor.estimatedDistributionTotal-result.capital.actualAnchor.distributionTotal)}
 
 `:""}評価額と元本の差：
 ${yen(latest.marketValue-latest.principal)}
@@ -8016,7 +8072,7 @@ function renderV25ForecastActual(rows){
 function exportV25ReportPdf(){
   if(!last.v25){
     $("v25Status").className="status bad";
-    $("v25Status").textContent="先にVer.27.4総合分析を実行してください。";
+    $("v25Status").textContent="先にVer.27.5総合分析を実行してください。";
     return;
   }
 
@@ -8051,7 +8107,7 @@ function exportV25ReportPdf(){
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width">
-<title>WCM Analyzer Pro Ver.27.4 分析レポート</title>
+<title>WCM Analyzer Pro Ver.27.5 分析レポート</title>
 <style>
   body{font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue","Noto Sans JP",sans-serif;margin:24px;color:#172033;background:#fff}
   h1{font-size:26px;margin-bottom:4px}
@@ -8078,7 +8134,7 @@ function exportV25ReportPdf(){
 </style>
 </head>
 <body>
-<h1>WCM Analyzer Pro Ver.27.4 分析レポート</h1>
+<h1>WCM Analyzer Pro Ver.27.5 分析レポート</h1>
 <p>作成日時：${new Date().toLocaleString("ja-JP")}</p>
 ${body}
 <p style="font-size:10px;color:#64748b;margin-top:30px">
@@ -8104,28 +8160,36 @@ document.querySelectorAll(".tab").forEach(button=>{
 });
 function saveActualAnchorSettings(){
   try{
-    localStorage.setItem("wcm-v274-actual-anchor",JSON.stringify({
+    localStorage.setItem("wcm-v275-actual-anchor",JSON.stringify({
       mode:$("v25ActualMode")?.value||"actual",
       units:+$("v25ActualUnits")?.value||0,
       nav:+$("v25ActualNav")?.value||0,
       avgCost:+$("v25ActualAvgCost")?.value||0,
-      acquisitionTotal:+$("v25ActualAcquisitionTotal")?.value||0
+      acquisitionTotal:+$("v25ActualAcquisitionTotal")?.value||0,
+      distributionTotal:+$("v25ActualDistributionTotal")?.value||0,
+      ordinaryDistribution:+$("v25ActualOrdinaryDistribution")?.value||0,
+      specialDistribution:+$("v25ActualSpecialDistribution")?.value||0,
+      totalReturn:+$("v25ActualTotalReturn")?.value||0
     }));
   }catch(_){}
 }
 function restoreActualAnchorSettings(){
   try{
-    const s=JSON.parse(localStorage.getItem("wcm-v274-actual-anchor")||"null");
+    const s=JSON.parse(localStorage.getItem("wcm-v275-actual-anchor")||"null");
     if(!s)return;
     if($("v25ActualMode"))$("v25ActualMode").value=s.mode||"actual";
     if($("v25ActualUnits")&&Number.isFinite(+s.units))$("v25ActualUnits").value=s.units;
     if($("v25ActualNav")&&Number.isFinite(+s.nav))$("v25ActualNav").value=s.nav;
     if($("v25ActualAvgCost")&&Number.isFinite(+s.avgCost))$("v25ActualAvgCost").value=s.avgCost;
     if($("v25ActualAcquisitionTotal")&&Number.isFinite(+s.acquisitionTotal))$("v25ActualAcquisitionTotal").value=s.acquisitionTotal;
+    if($("v25ActualDistributionTotal")&&Number.isFinite(+s.distributionTotal))$("v25ActualDistributionTotal").value=s.distributionTotal;
+    if($("v25ActualOrdinaryDistribution")&&Number.isFinite(+s.ordinaryDistribution))$("v25ActualOrdinaryDistribution").value=s.ordinaryDistribution;
+    if($("v25ActualSpecialDistribution")&&Number.isFinite(+s.specialDistribution))$("v25ActualSpecialDistribution").value=s.specialDistribution;
+    if($("v25ActualTotalReturn")&&Number.isFinite(+s.totalReturn))$("v25ActualTotalReturn").value=s.totalReturn;
   }catch(_){}
 }
 restoreActualAnchorSettings();
-["v25ActualMode","v25ActualUnits","v25ActualNav","v25ActualAvgCost","v25ActualAcquisitionTotal"].forEach(id=>{
+["v25ActualMode","v25ActualUnits","v25ActualNav","v25ActualAvgCost","v25ActualAcquisitionTotal","v25ActualDistributionTotal","v25ActualOrdinaryDistribution","v25ActualSpecialDistribution","v25ActualTotalReturn"].forEach(id=>{
   const el=$(id);if(el)el.addEventListener("change",saveActualAnchorSettings);
 });
 
@@ -8134,7 +8198,7 @@ $("taxMode").onchange=e=>$("taxRate").disabled=e.target.value==="before";
 $("addExtraInvestment").onclick=()=>{createExtraInvestmentRow({});updateExtraInvestStatus();const rows=$("extraInvestmentRows").querySelectorAll(".extra-invest-row");rows[rows.length-1]?.querySelector(".extra-invest-date")?.focus()};
 try{const s=JSON.parse(localStorage.getItem("wcm5")||"{}");if(s.start)$("startDate").value=s.start;if(s.initial!=null)$("initial").value=s.initial;if(s.monthly!=null)$("monthly").value=s.monthly;if(s.day)$("day").value=s.day;if(s.taxMode)$("taxMode").value=s.taxMode;if(s.taxRate)$("taxRate").value=s.taxRate;if(Array.isArray(s.extraInvestments)&&!localStorage.getItem("wcm-extra-investments-v272"))localStorage.setItem("wcm-extra-investments-v272",JSON.stringify(s.extraInvestments))}catch(_){}
 loadExtraInvestments();
-if("serviceWorker"in navigator)navigator.serviceWorker.register("./sw.js?v=272").catch(()=>{});
+if("serviceWorker"in navigator)navigator.serviceWorker.register("./sw.js?v=275").catch(()=>{});
 restoreMarketInputs();
 
 restoreOutlookSettings();
