@@ -7119,6 +7119,7 @@ const V25DashboardEngine=(()=>{
     const day=clamp(Math.round(+config.day||1),1,31);
     const taxRate=clamp(+config.taxRate||20.315,0,100)/100;
     const distributionMode=config.distributionMode||"reinvest";
+    const reinvestLagBusinessDays=clamp(Math.round(+config.reinvestLagBusinessDays||4),0,10);
     const purchases=getPurchasePlan(rows,initial,monthly,day,config.extraInvestments||[]);
 
     let units=0;
@@ -7131,29 +7132,50 @@ const V25DashboardEngine=(()=>{
     const history=[];
     const distributions=[];
 
-    for(const row of rows){
-      const purchase=purchases.get(row.dateText)||0;
+    // 分配金再投資は楽天証券の取引履歴に合わせ、分配日と同日ではなく
+    // 数営業日後の約定として処理する。Map<行index, [{amount,event}]>
+    const pendingReinvestments=new Map();
 
-      if(purchase>0&&row.nav>0){
-        const newUnits=purchase/row.nav*10000;
-        units+=newUnits;
-        principal+=purchase;
-        costBasis+=purchase;
+    const executePurchase=(amount,row,source="purchase")=>{
+      if(!(amount>0)||!(row.nav>0))return 0;
+      const newUnits=amount/row.nav*10000;
+      units+=newUnits;
+      costBasis+=amount;
+      if(source==="purchase")principal+=amount;
+      return newUnits;
+    };
+
+    for(let i=0;i<rows.length;i++){
+      const row=rows[i];
+
+      // 過去の分配金から発生した再投資を、実際の約定ラグ後に先に反映。
+      const due=pendingReinvestments.get(i)||[];
+      for(const item of due){
+        const addedUnits=executePurchase(item.amount,row,"reinvest");
+        item.event.reinvestDateText=row.dateText;
+        item.event.reinvestNav=row.nav;
+        item.event.reinvestedUnits=addedUnits;
       }
 
       let ordinary=0;
       let special=0;
       let netDistribution=0;
+      let individualPrincipalBefore=units>0?costBasis/units*10000:0;
+      let individualPrincipalAfter=individualPrincipalBefore;
 
+      // 税務上の区分は「分配後基準価額」と「分配直前の個別元本」を比較する。
+      // 同日の通常買付はその分配の権利を持たないものとして、分配判定の後に処理する。
       if(row.distribution>0&&units>0&&row.nav>0){
-        const averageCostPer10000=costBasis/units*10000;
+        const postDistributionNav=row.nav;
+        const distributionPer10000=row.distribution;
+
         const specialPer10000=clamp(
-          averageCostPer10000-row.nav,
+          individualPrincipalBefore-postDistributionNav,
           0,
-          row.distribution
+          distributionPer10000
         );
         const ordinaryPer10000=Math.max(
-          row.distribution-specialPer10000,
+          distributionPer10000-specialPer10000,
           0
         );
 
@@ -7165,28 +7187,56 @@ const V25DashboardEngine=(()=>{
         specialGross+=special;
         netDistribution=ordinary-ordinaryTax+special;
 
-        // 特別分配相当額は個別元本を減額する推定
+        // 元本払戻金（特別分配金）だけ個別元本を切り下げる。
+        // 普通分配金では個別元本は変わらない。
         costBasis=Math.max(costBasis-special,0);
+        individualPrincipalAfter=units>0?costBasis/units*10000:0;
+
+        const event={
+          dateText:row.dateText,
+          distributionPer10000,
+          postDistributionNav,
+          individualPrincipalBefore,
+          individualPrincipalAfter,
+          ordinaryPer10000,
+          specialPer10000,
+          ordinary,
+          special,
+          ordinaryRatio:distributionPer10000>0?ordinaryPer10000/distributionPer10000:0,
+          specialRatio:distributionPer10000>0?specialPer10000/distributionPer10000:0,
+          tax:ordinaryTax,
+          net:netDistribution,
+          reinvestDateText:null,
+          reinvestNav:null,
+          reinvestedUnits:0,
+          classification:
+            specialPer10000<=1e-9?"全額普通":
+            ordinaryPer10000<=1e-9?"全額特別":"普通＋特別"
+        };
+        distributions.push(event);
 
         if(distributionMode==="reinvest"&&netDistribution>0){
-          const reinvestedUnits=netDistribution/row.nav*10000;
-          units+=reinvestedUnits;
-          // 普通分配の再投資は新規取得、特別分配は元本払戻し再投資
-          costBasis+=netDistribution;
+          const targetIndex=Math.min(i+reinvestLagBusinessDays,rows.length-1);
+          if(targetIndex>i){
+            const list=pendingReinvestments.get(targetIndex)||[];
+            list.push({amount:netDistribution,event});
+            pendingReinvestments.set(targetIndex,list);
+          }else{
+            // ラグ0指定時のみ当日再投資
+            const addedUnits=executePurchase(netDistribution,row,"reinvest");
+            event.reinvestDateText=row.dateText;
+            event.reinvestNav=row.nav;
+            event.reinvestedUnits=addedUnits;
+          }
         }else{
           cashDistributions+=netDistribution;
         }
-
-        distributions.push({
-          dateText:row.dateText,
-          distributionPer10000:row.distribution,
-          ordinary,
-          special,
-          tax:ordinaryTax,
-          net:netDistribution,
-          averageCostPer10000
-        });
       }
+
+      // 初期・定期・追加投資は分配判定後に約定させる。
+      // これにより分配日当日の新規買付へ同日の分配を誤付与しない。
+      const purchase=purchases.get(row.dateText)||0;
+      if(purchase>0)executePurchase(purchase,row,"purchase");
 
       const marketValue=units*row.nav/10000;
       history.push({
@@ -7196,6 +7246,7 @@ const V25DashboardEngine=(()=>{
         units,
         principal,
         costBasis,
+        individualPrincipalPer10000:units>0?costBasis/units*10000:0,
         marketValue,
         cashDistributions,
         totalValue:marketValue+cashDistributions,
@@ -7208,9 +7259,7 @@ const V25DashboardEngine=(()=>{
       principal:0,costBasis:0,marketValue:0,cashDistributions:0,totalValue:0,units:0,nav:0
     };
 
-    // Ver.27.5: 証券会社の現在値をアンカーとして優先できる。
-    // 過去の積立・追加投資・分配履歴は分析用に再構築するが、
-    // 現在評価額と現在の取得原価は実績値で上書きし、誤差の累積を将来へ持ち込まない。
+    // Ver.27.6: 証券会社の現在値・分配実績をアンカーとして優先。
     const actualMode=(config.actualMode||"estimated")==="actual";
     let actualAnchor=null;
     if(actualMode){
@@ -7246,13 +7295,16 @@ const V25DashboardEngine=(()=>{
           estimatedCostBasis:latest.costBasis,
           estimatedOrdinaryDistribution:ordinaryGross,
           estimatedSpecialDistribution:specialGross,
-          estimatedDistributionTotal:ordinaryGross+specialGross
+          estimatedDistributionTotal:ordinaryGross+specialGross,
+          ordinaryEstimateGap:ordinaryGross-actualOrdinaryDistribution,
+          specialEstimateGap:specialGross-actualSpecialDistribution
         };
         latest={
           ...latest,
           units:actualUnits,
           nav:actualNav,
           costBasis:actualCostBasis,
+          individualPrincipalPer10000:actualAnchor.averageCostPer10000,
           marketValue:actualMarketValue,
           totalValue:actualMarketValue+latest.cashDistributions,
           actualAnchored:true
@@ -7269,7 +7321,9 @@ const V25DashboardEngine=(()=>{
       ordinaryGross,
       specialGross,
       taxPaid,
-      distributionMode
+      distributionMode,
+      reinvestLagBusinessDays,
+      classificationEngine:"tax-rule-v2"
     };
   }
 
@@ -7516,7 +7570,7 @@ const CrashBuyEngine=(()=>{
     years=Math.max(1,Math.floor(Number(years)||1));
     runs=Math.max(200,Math.floor(Number(runs)||3000));
 
-    // Ver.27.5: CSV最終日より後に登録された日付指定の追加投資を将来シミュレーションへ反映。
+    // Ver.27.6: CSV最終日より後に登録された日付指定の追加投資を将来シミュレーションへ反映。
     const latestDate=rows.at(-1).date;
     const futureExtras=normalizeExtraInvestments(extraInvestments).map(item=>{
       const d=new Date(item.date+"T00:00:00");
@@ -7694,7 +7748,7 @@ ${years}年以内に${yen(target)}へ到達する推定確率：${prob.probabili
 ${hitText}
 将来の指定追加投資：${prob.futureExtras.length}件・${yen(prob.futureExtras.reduce((s,x)=>s+x.amount,0))}
 
-Ver.27.5確率モデル：過去実績45%＋長期期待リターン40%（年率7%・ボラ22%）＋暴落ストレス15%を混合。過去実績成分は値動きの形だけを利用し、平均収益率は年率9%を上限として再中心化します。通常積立を毎月、−10/−15/−20/−25/−30/−40%の各段階の追加買付を1暴落局面につき1回だけ実行します。直近の好成績を10年先へそのまま外挿しない参考シミュレーションで、将来の成果を保証しません。`;
+Ver.27.6確率モデル：過去実績45%＋長期期待リターン40%（年率7%・ボラ22%）＋暴落ストレス15%を混合。過去実績成分は値動きの形だけを利用し、平均収益率は年率9%を上限として再中心化します。通常積立を毎月、−10/−15/−20/−25/−30/−40%の各段階の追加買付を1暴落局面につき1回だけ実行します。直近の好成績を10年先へそのまま外挿しない参考シミュレーションで、将来の成果を保証しません。`;
   }catch(error){
     console.error("暴落買いAIエラー",error);
     hero.innerHTML=`<div class="status bad">暴落買いAIエラー：${error.message}</div>`;
@@ -7714,6 +7768,7 @@ function runV25Dashboard(){
         day:+$("day").value||1,
         taxRate:+$("v25DistributionTax").value||20.315,
         distributionMode:$("v25DistributionMode").value,
+        reinvestLagBusinessDays:+$("v25ReinvestLag")?.value||4,
         riskStyle:$("v25RiskStyle").value,
         extraInvestments:getExtraInvestments(),
         actualMode:$("v25ActualMode")?.value||"estimated",
@@ -7743,7 +7798,7 @@ function runV25Dashboard(){
       $("exportV25Pdf").disabled=false;
       status.className="status ok";
       renderCrashBuyAI();
-      status.textContent="Ver.27.5総合分析が完了しました。";
+      status.textContent="Ver.27.6総合分析が完了しました。";
     }catch(error){
       console.error("Ver.25総合分析エラー",error);
       status.className="status bad";
@@ -7870,15 +7925,15 @@ ${decisionText}
     <div class="card">
       <div class="card-title">普通分配（実績）</div>
       <div class="card-value">${yen(result.capital.actualAnchor.ordinaryDistribution)}</div>
-      <div class="card-sub">AI推定 ${yen(result.capital.ordinaryGross)} / 差 ${yen(result.capital.ordinaryGross-result.capital.actualAnchor.ordinaryDistribution)}</div>
+      <div class="card-sub">税務ルール推定 ${yen(result.capital.ordinaryGross)} / 差 ${yen(result.capital.ordinaryGross-result.capital.actualAnchor.ordinaryDistribution)}</div>
     </div>
     <div class="card">
       <div class="card-title">特別分配（実績）</div>
       <div class="card-value">${yen(result.capital.actualAnchor.specialDistribution)}</div>
-      <div class="card-sub">AI推定 ${yen(result.capital.specialGross)} / 差 ${yen(result.capital.specialGross-result.capital.actualAnchor.specialDistribution)}</div>
+      <div class="card-sub">税務ルール推定 ${yen(result.capital.specialGross)} / 差 ${yen(result.capital.specialGross-result.capital.actualAnchor.specialDistribution)}</div>
     </div>
     <div class="card">
-      <div class="card-title">分配金AI推定誤差</div>
+      <div class="card-title">分配金ルール推定誤差</div>
       <div class="card-value">${yen(result.capital.actualAnchor.estimatedDistributionTotal-result.capital.actualAnchor.distributionTotal)}</div>
       <div class="card-sub">実績 ${yen(result.capital.actualAnchor.distributionTotal)} / 推定 ${yen(result.capital.actualAnchor.estimatedDistributionTotal)}</div>
     </div>
@@ -7930,8 +7985,12 @@ ${decisionText}
         <tr>
           <th>日付</th>
           <th>分配金/1万口</th>
-          <th>普通分配推定</th>
-          <th>特別分配推定</th>
+          <th>分配後NAV</th>
+          <th>分配前個別元本</th>
+          <th>判定</th>
+          <th>普通分配</th>
+          <th>特別分配</th>
+          <th>再投資約定日</th>
           <th>税額推定</th>
         </tr>
       </thead>
@@ -7939,24 +7998,30 @@ ${decisionText}
         <tr>
           <td>${item.dateText}</td>
           <td>${item.distributionPer10000.toLocaleString()}円</td>
-          <td class="v25-tax-normal">${yen(item.ordinary)}</td>
-          <td class="v25-tax-special">${yen(item.special)}</td>
+          <td>${Math.round(item.postDistributionNav).toLocaleString()}円</td>
+          <td>${item.individualPrincipalBefore.toLocaleString("ja-JP",{maximumFractionDigits:2})}円</td>
+          <td>${item.classification}</td>
+          <td class="v25-tax-normal">${yen(item.ordinary)}<div class="small">${item.ordinaryPer10000.toFixed(2)}円/1万口</div></td>
+          <td class="v25-tax-special">${yen(item.special)}<div class="small">${item.specialPer10000.toFixed(2)}円/1万口</div></td>
+          <td>${item.reinvestDateText||"—"}${item.reinvestNav?`<div class="small">NAV ${Math.round(item.reinvestNav).toLocaleString()}円</div>`:""}</td>
           <td>${yen(item.tax)}</td>
         </tr>`).join("")}</tbody>
     </table></div>`
     :'<div class="small">分配実績がありません。</div>';
 
-  $("v25DistributionNote").textContent=`普通分配・特別分配の区分は、各分配日の基準価額と推定平均取得価額を比較した概算です。
+  $("v25DistributionNote").textContent=`Ver.27.6 分類エンジンv2：普通分配・特別分配は、税務ルールに沿って「分配後基準価額」と「その分配直前の個別元本」を比較して判定します。
 
-実際の税務上の個別元本・普通分配・元本払戻金は、証券会社の取引報告書や税務資料で確認してください。
+特別分配/1万口 ＝ min(分配金, max(分配前個別元本 − 分配後基準価額, 0))。普通分配は分配金から特別分配を差し引いた残額です。特別分配が出た分だけ個別元本を切り下げ、その後の買付・再投資では加重平均で個別元本を更新します。
 
-積立日は入力欄の「積立日」を使い、その日が休業日の場合はCSV上で同月の次の営業日、無ければ月末営業日に購入したものとして計算しています。
+同日の新規買付は、その日の分配判定後に約定するものとして扱い、同日の分配を誤って付与しません。分配金再投資は入力した約定ラグ（初期値4営業日）後のCSV基準価額で再投資します。
 
-${result.capital.actualAnchor?`Ver.27.5実績優先モード：現在評価額・保有口数・取得原価に加え、累計分配金・普通分配・特別分配・トータルリターンも証券会社の入力値を実績アンカーとして表示します。履歴グラフと日別の普通/特別分配内訳は推定ですが、累計実績との差額を確認できます。分配実績は再投資済みの場合があるため、現在評価額へ単純加算してトータルリターンを再計算しません。`:"履歴推定モード：現在値も取引履歴から再構築した推定値です。"}`;
+日別分類を証券会社と完全一致させるには、実際の全買付約定日・金額・再投資約定日が必要です。現在値と累計分配実績は実績アンカーを優先します。
+
+${result.capital.actualAnchor?`実績優先モード：累計分配 ${yen(result.capital.actualAnchor.distributionTotal)}（普通 ${yen(result.capital.actualAnchor.ordinaryDistribution)}／特別 ${yen(result.capital.actualAnchor.specialDistribution)}）。税務ルール推定は普通 ${yen(result.capital.ordinaryGross)}／特別 ${yen(result.capital.specialGross)}です。`:`履歴推定モード：入力した取引履歴から個別元本を連続追跡しています。`}`;
 
   renderV25ForecastActual(result.predictionActual);
 
-  $("v25Report").textContent=`WCM Analyzer Pro Ver.27.5 総合分析
+  $("v25Report").textContent=`WCM Analyzer Pro Ver.27.6 総合分析
 
 作成日時：
 ${new Date(result.createdAt).toLocaleString("ja-JP")}
@@ -8072,7 +8137,7 @@ function renderV25ForecastActual(rows){
 function exportV25ReportPdf(){
   if(!last.v25){
     $("v25Status").className="status bad";
-    $("v25Status").textContent="先にVer.27.5総合分析を実行してください。";
+    $("v25Status").textContent="先にVer.27.6総合分析を実行してください。";
     return;
   }
 
@@ -8107,7 +8172,7 @@ function exportV25ReportPdf(){
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width">
-<title>WCM Analyzer Pro Ver.27.5 分析レポート</title>
+<title>WCM Analyzer Pro Ver.27.6 分析レポート</title>
 <style>
   body{font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue","Noto Sans JP",sans-serif;margin:24px;color:#172033;background:#fff}
   h1{font-size:26px;margin-bottom:4px}
@@ -8134,7 +8199,7 @@ function exportV25ReportPdf(){
 </style>
 </head>
 <body>
-<h1>WCM Analyzer Pro Ver.27.5 分析レポート</h1>
+<h1>WCM Analyzer Pro Ver.27.6 分析レポート</h1>
 <p>作成日時：${new Date().toLocaleString("ja-JP")}</p>
 ${body}
 <p style="font-size:10px;color:#64748b;margin-top:30px">
@@ -8198,7 +8263,7 @@ $("taxMode").onchange=e=>$("taxRate").disabled=e.target.value==="before";
 $("addExtraInvestment").onclick=()=>{createExtraInvestmentRow({});updateExtraInvestStatus();const rows=$("extraInvestmentRows").querySelectorAll(".extra-invest-row");rows[rows.length-1]?.querySelector(".extra-invest-date")?.focus()};
 try{const s=JSON.parse(localStorage.getItem("wcm5")||"{}");if(s.start)$("startDate").value=s.start;if(s.initial!=null)$("initial").value=s.initial;if(s.monthly!=null)$("monthly").value=s.monthly;if(s.day)$("day").value=s.day;if(s.taxMode)$("taxMode").value=s.taxMode;if(s.taxRate)$("taxRate").value=s.taxRate;if(Array.isArray(s.extraInvestments)&&!localStorage.getItem("wcm-extra-investments-v272"))localStorage.setItem("wcm-extra-investments-v272",JSON.stringify(s.extraInvestments))}catch(_){}
 loadExtraInvestments();
-if("serviceWorker"in navigator)navigator.serviceWorker.register("./sw.js?v=275").catch(()=>{});
+if("serviceWorker"in navigator)navigator.serviceWorker.register("./sw.js?v=276").catch(()=>{});
 restoreMarketInputs();
 
 restoreOutlookSettings();

@@ -12,15 +12,15 @@
   <meta name="apple-mobile-web-app-title" content="WCM Analyzer">
   <link rel="manifest" href="./manifest.json">
   <link rel="apple-touch-icon" href="./icon-192.svg">
-  <title>WCM Analyzer Pro Ver.27.5</title>
-<link rel="stylesheet" href="./style.css?v=275">
+  <title>WCM Analyzer Pro Ver.27.6</title>
+<link rel="stylesheet" href="./style.css?v=27502">
 </head>
 <body>
 <main class="app">
 <header>
   <h1>WCM Analyzer Pro</h1>
-  <span class="badge">iPhone Edition Ver.27.5</span>
-  <p class="lead">Ver.27.5では、Ver.27.4の現在値アンカーに加え、証券会社の累計分配金・普通分配・特別分配・トータルリターンも実績アンカーとして登録し、AI推定との差額まで確認できます。</p>
+  <span class="badge">iPhone Edition Ver.27.6</span>
+  <p class="lead">Ver.27.6では、普通分配・特別分配を「分配後基準価額と分配直前の個別元本」で税務ルール判定する分類エンジンv2を搭載。分配日当日の買付順序と再投資の約定ラグも反映します。</p>
 </header>
 
 <section class="panel auto-data-panel">
@@ -91,7 +91,7 @@
     <button class="tab" data-page="outlook">今後の見通し</button>
     <button class="tab" data-page="forecast">将来予測</button>
     <button class="tab" data-page="selflearning">自己学習AI</button>
-    <button class="tab" data-page="v25dashboard">Ver.27.5総合</button>
+    <button class="tab" data-page="v25dashboard">Ver.27.6総合</button>
     <button class="tab" data-page="validation">精度検証</button>
     <button class="tab" data-page="regime">相場局面</button>
     <button class="tab" data-page="advisor">総合判断</button>
@@ -816,7 +816,7 @@
 
   <section id="v25dashboard" class="page" hidden>
     <div class="panel v25-hero">
-      <h2>WCM AI統合ダッシュボード Ver.27.5</h2>
+      <h2>WCM AI統合ダッシュボード Ver.27.6</h2>
       <p class="small">
         積立元本、実際の積立日、分配金再投資、普通分配・特別分配の推定、
         4期間予測、自己学習結果をまとめて参考判断を作成します。
@@ -833,6 +833,11 @@
         <div class="field">
           <label>普通分配の税率（%）</label>
           <input id="v25DistributionTax" type="number" inputmode="decimal" min="0" max="50" step="0.001" value="20.315">
+        </div>
+        <div class="field">
+          <label>分配金再投資の約定ラグ（営業日）</label>
+          <input id="v25ReinvestLag" type="number" inputmode="numeric" min="0" max="10" step="1" value="4">
+          <div class="small">楽天証券の再投資履歴に合わせた初期値：4営業日</div>
         </div>
         <div class="field">
           <label>判定スタイル</label>
@@ -862,7 +867,7 @@
       </div>
 
       <div class="grid">
-        <button id="runV25Dashboard" class="primary">Ver.27.5総合分析を実行</button>
+        <button id="runV25Dashboard" class="primary">Ver.27.6総合分析を実行</button>
         <button id="exportV25Pdf" class="green" disabled>分析結果をPDF保存</button>
       </div>
 
@@ -921,7 +926,7 @@
     </div>
 
     <div class="panel">
-      <h2>Ver.27.5総合レポート</h2>
+      <h2>Ver.27.6総合レポート</h2>
       <div id="v25Report" class="comment"></div>
     </div>
   </section>
@@ -1088,6 +1093,6 @@
 </section>
 </main>
 
-<script src="./app.js?v=275" defer></script>
+<script src="./app.js?v=27502" defer></script>
 </body>
 </html>
