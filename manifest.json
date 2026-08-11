@@ -1,11 +1,11 @@
 {
-  "name": "WCM Analyzer Pro Ver.27",
+  "name": "WCM Analyzer Pro Ver.27.1",
   "short_name": "WCM Analyzer",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#07101d",
   "theme_color": "#08111f",
-  "description": "Ver.25機能＋暴落買いAI・推奨買付・追加口数・目標到達確率",
+  "description": "暴落買いAI＋過去リターン再中心化＋長期期待＋暴落ストレス混合モデル",
   "icons": [
     {
       "src": "./icon-192.svg",

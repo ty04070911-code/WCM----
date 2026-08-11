@@ -7372,6 +7372,11 @@ const CrashBuyEngine=(()=>{
     const state=currentState(rows);
     const empirical=empiricalReturns(rows);
     if(empirical.length<30)throw new Error("到達確率の計算に必要な日次データが不足しています。");
+    // Ver.27.1: 過去リターンの「形」は使うが、過去の高い平均リターンをそのまま将来へ持ち込まない。
+    // 対数リターンを平均0へ中心化し、長期想定ドリフトへ付け替える。
+    const empiricalLogs=empirical.map(r=>Math.log1p(r)).filter(Number.isFinite);
+    const empiricalLogMean=mean(empiricalLogs);
+    const empiricalResiduals=empiricalLogs.map(x=>x-empiricalLogMean);
     units=Math.max(0,Number(units)||0);
     baseMonthly=Math.max(0,Number(baseMonthly)||0);
     target=Math.max(1,Number(target)||3000000);
@@ -7383,8 +7388,10 @@ const CrashBuyEngine=(()=>{
     // 過去の好成績だけを100%再利用して到達確率が過度に楽観化するのを抑える。
     const WEIGHTS={historical:.45,longTerm:.40,stress:.15};
     const LONG_TERM_ANNUAL_RETURN=.07;      // 中立的な長期期待リターン 7%
+    const HISTORICAL_DRIFT_CAP=.09;         // 過去成分の将来ドリフトは年率9%で上限固定
     const LONG_TERM_ANNUAL_VOL=.22;         // 年率ボラティリティ 22%
     const dailyMu=Math.log(1+LONG_TERM_ANNUAL_RETURN)/252;
+    const historicalDailyMu=Math.log(1+HISTORICAL_DRIFT_CAP)/252;
     const dailySigma=LONG_TERM_ANNUAL_VOL/Math.sqrt(252);
 
     function normal(rng){
@@ -7422,8 +7429,10 @@ const CrashBuyEngine=(()=>{
         }else{
           const mode=rng();
           if(mode<WEIGHTS.historical){
-            const idx=Math.min(Math.floor(rng()*empirical.length),empirical.length-1);
-            r=empirical[idx]||0;
+            // 過去の値動き（歪み・太い裾・ボラ）は残す一方、平均収益は年率9%へ再中心化。
+            // これにより直近の非常に強い上昇局面を10年間へ機械的に外挿しない。
+            const idx=Math.min(Math.floor(rng()*empiricalResiduals.length),empiricalResiduals.length-1);
+            r=Math.exp(historicalDailyMu+(empiricalResiduals[idx]||0))-1;
           }else if(mode<WEIGHTS.historical+WEIGHTS.longTerm){
             r=Math.exp(dailyMu+dailySigma*normal(rng))-1;
           }else{
@@ -7470,7 +7479,7 @@ const CrashBuyEngine=(()=>{
       high:quantile(endings,.9),
       medianHitDays:hitDays.length?quantile(hitDays,.5):null,
       runs,years,target,startValue,
-      model:{weights:WEIGHTS,longTermAnnualReturn:LONG_TERM_ANNUAL_RETURN,longTermAnnualVol:LONG_TERM_ANNUAL_VOL}
+      model:{weights:WEIGHTS,longTermAnnualReturn:LONG_TERM_ANNUAL_RETURN,historicalDriftCap:HISTORICAL_DRIFT_CAP,longTermAnnualVol:LONG_TERM_ANNUAL_VOL}
     };
   }
 
@@ -7533,7 +7542,7 @@ function renderCrashBuyAI(){
 ${years}年以内に${yen(target)}へ到達する推定確率：${prob.probability.toFixed(1)}%
 ${hitText}
 
-Ver.27確率モデル：過去実績45%＋長期期待リターン40%（年率7%・ボラ22%）＋暴落ストレス15%を混合。通常積立を毎月、−10/−15/−20/−25/−30/−40%の各段階の追加買付を1暴落局面につき1回だけ実行します。過去の好成績だけで確率が過度に高くならないよう補正した参考シミュレーションで、将来の成果を保証しません。`;
+Ver.27.1確率モデル：過去実績45%＋長期期待リターン40%（年率7%・ボラ22%）＋暴落ストレス15%を混合。過去実績成分は値動きの形だけを利用し、平均収益率は年率9%を上限として再中心化します。通常積立を毎月、−10/−15/−20/−25/−30/−40%の各段階の追加買付を1暴落局面につき1回だけ実行します。直近の好成績を10年先へそのまま外挿しない参考シミュレーションで、将来の成果を保証しません。`;
   }catch(error){
     console.error("暴落買いAIエラー",error);
     hero.innerHTML=`<div class="status bad">暴落買いAIエラー：${error.message}</div>`;
