@@ -12,15 +12,15 @@
   <meta name="apple-mobile-web-app-title" content="WCM Analyzer">
   <link rel="manifest" href="./manifest.json">
   <link rel="apple-touch-icon" href="./icon-192.svg">
-  <title>WCM Analyzer Pro Ver.25</title>
-<link rel="stylesheet" href="./style.css?v=25">
+  <title>WCM Analyzer Pro Ver.26</title>
+<link rel="stylesheet" href="./style.css?v=26">
 </head>
 <body>
 <main class="app">
 <header>
   <h1>WCM Analyzer Pro</h1>
-  <span class="badge">iPhone Edition Ver.25</span>
-  <p class="lead">Ver.25では、積立元本・分配金税区分・4期間予測・信頼度・モデル貢献度・投資判断・予測実績比較・PDF保存を統合しました。</p>
+  <span class="badge">iPhone Edition Ver.26</span>
+  <p class="lead">Ver.26では、Ver.25の機能に加え、現在ドローダウン・今月の推奨買付・予想追加口数・目標資産到達確率を自動表示します。</p>
 </header>
 
 <section class="panel auto-data-panel">
@@ -78,7 +78,7 @@
     <button class="tab" data-page="outlook">今後の見通し</button>
     <button class="tab" data-page="forecast">将来予測</button>
     <button class="tab" data-page="selflearning">自己学習AI</button>
-    <button class="tab" data-page="v25dashboard">Ver.25総合</button>
+    <button class="tab" data-page="v25dashboard">Ver.26総合</button>
     <button class="tab" data-page="validation">精度検証</button>
     <button class="tab" data-page="regime">相場局面</button>
     <button class="tab" data-page="advisor">総合判断</button>
@@ -803,7 +803,7 @@
 
   <section id="v25dashboard" class="page" hidden>
     <div class="panel v25-hero">
-      <h2>WCM AI統合ダッシュボード Ver.25</h2>
+      <h2>WCM AI統合ダッシュボード Ver.26</h2>
       <p class="small">
         積立元本、実際の積立日、分配金再投資、普通分配・特別分配の推定、
         4期間予測、自己学習結果をまとめて参考判断を作成します。
@@ -832,7 +832,7 @@
       </div>
 
       <div class="grid">
-        <button id="runV25Dashboard" class="primary">Ver.25総合分析を実行</button>
+        <button id="runV25Dashboard" class="primary">Ver.26総合分析を実行</button>
         <button id="exportV25Pdf" class="green" disabled>分析結果をPDF保存</button>
       </div>
 
@@ -846,6 +846,22 @@
       <div id="v25DecisionHero"></div>
       <div id="v25ConfidenceMeter" style="margin-top:14px"></div>
       <div id="v25DecisionComment" class="comment" style="margin-top:14px"></div>
+    </div>
+
+    <div class="panel crash-buy-panel">
+      <h2>暴落買いAI・目標到達確率</h2>
+      <p class="small">分配の影響を除くため、原則として税引前分配金再投資基準価額の52週高値からドローダウンを計算します。買い増しは各下落段階で1回ずつ発動する前提です。</p>
+      <div class="grid">
+        <div class="field"><label>現在保有口数</label><input id="crashCurrentUnits" type="number" inputmode="numeric" min="0" step="1000" value="1818299"></div>
+        <div class="field"><label>通常の毎月積立額</label><input id="crashBaseMonthly" type="number" inputmode="numeric" min="0" step="10000" value="30000"></div>
+        <div class="field"><label>目標評価額</label><input id="crashTargetValue" type="number" inputmode="numeric" min="100000" step="100000" value="3000000"></div>
+        <div class="field"><label>到達確率の期間</label><select id="crashTargetYears"><option value="1" selected>1年</option><option value="3">3年</option><option value="5">5年</option><option value="10">10年</option></select></div>
+        <div class="field"><label>モンテカルロ試行回数</label><select id="crashTargetRuns"><option value="1000">1,000回</option><option value="3000" selected>3,000回</option><option value="5000">5,000回</option><option value="10000">10,000回</option></select></div>
+      </div>
+      <div id="crashBuyHero" class="crash-buy-hero"></div>
+      <div id="crashBuyTable" style="margin-top:14px"></div>
+      <div id="crashBuyComment" class="comment" style="margin-top:14px"></div>
+      <button id="recalcCrashBuy" class="primary" style="margin-top:14px">暴落買い判定を再計算</button>
     </div>
 
     <div class="panel">
@@ -875,7 +891,7 @@
     </div>
 
     <div class="panel">
-      <h2>Ver.25総合レポート</h2>
+      <h2>Ver.26総合レポート</h2>
       <div id="v25Report" class="comment"></div>
     </div>
   </section>
@@ -1042,6 +1058,6 @@
 </section>
 </main>
 
-<script src="./app.js?v=25" defer></script>
+<script src="./app.js?v=26" defer></script>
 </body>
 </html>

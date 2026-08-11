@@ -1,4 +1,4 @@
-const CACHE="wcm-analyzer-v25-integrated-dashboard";
+const CACHE="wcm-analyzer-v26-integrated-dashboard";
 const ASSETS=[
   "./",
   "./index.html",

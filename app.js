@@ -7315,6 +7315,184 @@ const V25DashboardEngine=(()=>{
   });
 })();
 
+
+const CrashBuyEngine=(()=>{
+  const TIERS=[
+    {dd:10,extra:20000,label:"小調整"},
+    {dd:15,extra:30000,label:"調整"},
+    {dd:20,extra:50000,label:"買い増し①"},
+    {dd:25,extra:100000,label:"買い増し②"},
+    {dd:30,extra:150000,label:"大幅買い"},
+    {dd:40,extra:200000,label:"最大級"}
+  ];
+
+  function totalReturnValue(row){
+    const v=Number(row?.reinvestNav);
+    return Number.isFinite(v)&&v>0?v:Number(row?.nav)||0;
+  }
+
+  function currentState(rows){
+    if(!Array.isArray(rows)||rows.length<2)throw new Error("分析済みCSVデータが必要です。");
+    const latest=rows.at(-1);
+    const window=rows.slice(-Math.min(252,rows.length));
+    const currentTR=totalReturnValue(latest);
+    const peakTR=Math.max(...window.map(totalReturnValue).filter(v=>Number.isFinite(v)&&v>0));
+    const drawdown=peakTR>0?(currentTR/peakTR-1)*100:0;
+    const nav=Number(latest.nav)||0;
+    const rawPeak=Math.max(...window.map(r=>Number(r.nav)||0));
+    const rawDrawdown=rawPeak>0?(nav/rawPeak-1)*100:0;
+    return {latest,nav,currentTR,peakTR,drawdown,rawDrawdown};
+  }
+
+  function recommendation(drawdownPct,baseMonthly){
+    const depth=Math.max(0,-drawdownPct);
+    let tier=null;
+    for(const item of TIERS)if(depth>=item.dd)tier=item;
+    const extra=tier?tier.extra:0;
+    return {
+      tier,
+      base:Math.max(0,Number(baseMonthly)||0),
+      extra,
+      total:Math.max(0,Number(baseMonthly)||0)+extra,
+      status:tier?tier.label:"通常積立"
+    };
+  }
+
+  function empiricalReturns(rows){
+    const values=rows.map(totalReturnValue).filter(v=>Number.isFinite(v)&&v>0);
+    const out=[];
+    for(let i=1;i<values.length;i++){
+      const r=values[i]/values[i-1]-1;
+      if(Number.isFinite(r)&&r>-.95&&r<.95)out.push(r);
+    }
+    return out;
+  }
+
+  function probability(rows,{units,baseMonthly,target,years,runs}){
+    const state=currentState(rows);
+    const series=empiricalReturns(rows);
+    if(series.length<30)throw new Error("到達確率の計算に必要な日次データが不足しています。");
+    units=Math.max(0,Number(units)||0);
+    baseMonthly=Math.max(0,Number(baseMonthly)||0);
+    target=Math.max(1,Number(target)||3000000);
+    years=Math.max(1,Math.floor(Number(years)||1));
+    runs=Math.max(200,Math.floor(Number(runs)||3000));
+    const startValue=units*state.nav/10000;
+    const startTR=state.currentTR;
+    const tradingDays=years*252;
+    let success=0;
+    const endings=[];
+    const hitDays=[];
+
+    for(let k=0;k<runs;k++){
+      const rng=makeRng(2600000+k*7919);
+      let portfolio=startValue;
+      let tr=startTR;
+      let peak=Math.max(state.peakTR,tr);
+      let fired=new Set();
+      let hit=null;
+      for(let day=1;day<=tradingDays;day++){
+        const idx=Math.min(Math.floor(rng()*series.length),series.length-1);
+        const r=series[idx]||0;
+        tr*=Math.max(1+r,.01);
+        portfolio*=Math.max(1+r,.01);
+        if(tr>=peak){ peak=tr; fired=new Set(); }
+        const dd=peak>0?(tr/peak-1)*100:0;
+
+        // 月1回の通常積立（21営業日ごと）
+        if(day%21===0)portfolio+=baseMonthly;
+
+        // 下落段階を初めて跨いだ時だけ追加買付
+        const depth=-dd;
+        for(const tier of TIERS){
+          if(depth>=tier.dd&&!fired.has(tier.dd)){
+            portfolio+=tier.extra;
+            fired.add(tier.dd);
+          }
+        }
+        if(hit===null&&portfolio>=target)hit=day;
+      }
+      endings.push(portfolio);
+      if(hit!==null){success++;hitDays.push(hit);}
+    }
+    endings.sort((a,b)=>a-b);
+    hitDays.sort((a,b)=>a-b);
+    return {
+      probability:success/runs*100,
+      median:quantile(endings,.5),
+      low:quantile(endings,.1),
+      high:quantile(endings,.9),
+      medianHitDays:hitDays.length?quantile(hitDays,.5):null,
+      runs,years,target,startValue
+    };
+  }
+
+  return Object.freeze({TIERS,currentState,recommendation,probability});
+})();
+
+function renderCrashBuyAI(){
+  const hero=$("crashBuyHero");
+  if(!hero)return;
+  if(!last.d){
+    hero.innerHTML='<div class="small">先にCSVを読み込み、メイン分析を実行してください。</div>';
+    return;
+  }
+  try{
+    const units=+$("crashCurrentUnits").value||0;
+    const base=+$("crashBaseMonthly").value||0;
+    const target=+$("crashTargetValue").value||3000000;
+    const years=+$("crashTargetYears").value||1;
+    const runs=+$("crashTargetRuns").value||3000;
+    const state=CrashBuyEngine.currentState(last.d);
+    const rec=CrashBuyEngine.recommendation(state.drawdown,base);
+    const addUnits=state.nav>0?rec.total/state.nav*10000:0;
+    const extraUnits=state.nav>0?rec.extra/state.nav*10000:0;
+    const prob=CrashBuyEngine.probability(last.d,{units,baseMonthly:base,target,years,runs});
+    last.crashBuy={state,rec,addUnits,extraUnits,prob};
+
+    const ddClass=(-state.drawdown)>=20?"crash-hot":(-state.drawdown)>=10?"crash-opportunity":"";
+    hero.innerHTML=`
+      <div class="crash-metric ${ddClass}">
+        <div class="label">現在のドローダウン</div>
+        <div class="value">${state.drawdown.toFixed(2)}%</div>
+        <div class="sub">52週高値比・分配金再投資基準価額ベース<br>通常NAVでは ${state.rawDrawdown.toFixed(2)}%</div>
+      </div>
+      <div class="crash-metric ${rec.extra>0?"crash-opportunity":""}">
+        <div class="label">今月の推奨買付</div>
+        <div class="value">${yen(rec.total)}</div>
+        <div class="sub">通常 ${yen(rec.base)} ＋ 暴落追加 ${yen(rec.extra)}<br>${rec.status}</div>
+      </div>
+      <div class="crash-metric">
+        <div class="label">予想追加口数</div>
+        <div class="value">${(addUnits/10000).toFixed(2)}万口</div>
+        <div class="sub">うち暴落追加分 ${(extraUnits/10000).toFixed(2)}万口<br>最新NAV ${Math.round(state.nav).toLocaleString()}円</div>
+      </div>
+      <div class="crash-metric">
+        <div class="label">${yen(target)}到達確率</div>
+        <div class="value crash-probability">${prob.probability.toFixed(1)}%</div>
+        <div class="sub">${years}年以内・${prob.runs.toLocaleString()}回<br>中央値 ${yen(prob.median)}</div>
+      </div>`;
+
+    $("crashBuyTable").innerHTML=`<div class="tablewrap"><table><thead><tr><th>ドローダウン</th><th>追加買付</th><th>通常積立込み</th><th>現在の判定</th></tr></thead><tbody>${CrashBuyEngine.TIERS.map(t=>{
+      const active=(-state.drawdown)>=t.dd;
+      return `<tr${active?' class="active-tier"':''}><td>−${t.dd}%</td><td>${yen(t.extra)}</td><td>${yen(base+t.extra)}</td><td>${active?'到達済み':'未到達'}</td></tr>`;
+    }).join("")}</tbody></table></div>`;
+
+    const hitText=prob.medianHitDays?`到達した経路の初回到達中央値は約${(prob.medianHitDays/21).toFixed(1)}か月です。`:`今回の試行では到達経路がありませんでした。`;
+    $("crashBuyComment").textContent=`判定基準：52週高値からの税引前分配金再投資基準価額の下落率
+現在：${state.drawdown.toFixed(2)}%
+今月の参考買付：${yen(rec.total)}
+予想追加口数：約${(addUnits/10000).toFixed(2)}万口
+${years}年以内に${yen(target)}へ到達する推定確率：${prob.probability.toFixed(1)}%
+${hitText}
+
+確率計算はWCMの過去の日次トータルリターンをブートストラップし、通常積立を毎月、−10/−15/−20/−25/−30/−40%の各段階の追加買付を1暴落局面につき1回だけ実行した参考シミュレーションです。将来の成果を保証しません。`;
+  }catch(error){
+    console.error("暴落買いAIエラー",error);
+    hero.innerHTML=`<div class="status bad">暴落買いAIエラー：${error.message}</div>`;
+  }
+}
+
 function runV25Dashboard(){
   const status=$("v25Status");
   status.className="status";
@@ -7335,7 +7513,8 @@ function runV25Dashboard(){
       renderV25Dashboard(result);
       $("exportV25Pdf").disabled=false;
       status.className="status ok";
-      status.textContent="Ver.25総合分析が完了しました。";
+      renderCrashBuyAI();
+      status.textContent="Ver.26総合分析が完了しました。";
     }catch(error){
       console.error("Ver.25総合分析エラー",error);
       status.className="status bad";
@@ -7513,7 +7692,7 @@ ${decisionText}
 
   renderV25ForecastActual(result.predictionActual);
 
-  $("v25Report").textContent=`WCM Analyzer Pro Ver.25 総合分析
+  $("v25Report").textContent=`WCM Analyzer Pro Ver.26 総合分析
 
 作成日時：
 ${new Date(result.createdAt).toLocaleString("ja-JP")}
@@ -7602,7 +7781,7 @@ function renderV25ForecastActual(rows){
 function exportV25ReportPdf(){
   if(!last.v25){
     $("v25Status").className="status bad";
-    $("v25Status").textContent="先にVer.25総合分析を実行してください。";
+    $("v25Status").textContent="先にVer.26総合分析を実行してください。";
     return;
   }
 
@@ -7688,7 +7867,7 @@ document.querySelectorAll(".tab").forEach(button=>{
     $(button.dataset.page).hidden=false;
   };
 });
-$("distFile").onchange=e=>load(e.target,"dist");$("growthFile").onchange=e=>load(e.target,"growth");$("analyze").onclick=analyze;$("runBacktest").onclick=runForecastValidation;$("runRegime").onclick=runRegimeAnalysis;$("runAdvisor").onclick=runIntegratedAdvisor;$("savePrediction").onclick=saveCurrentPrediction;$("evaluatePredictions").onclick=evaluateSavedPredictions;$("clearLearning").onclick=clearLearningData;$("runAccuracyMeasurement").onclick=runAccuracyMeasurement;$("runStatisticalEngine").onclick=runStatisticalForecast;$("runAdaptiveAI").onclick=runAdaptiveAI;$("resetAdaptiveAI").onclick=resetAdaptiveAI;$("runAutoMode").onclick=runAutoModeDiagnosis;$("loadAutoData").onclick=()=>loadAutomaticCsv();$("analyzeAutoData").onclick=analyzeAutomaticCsv;$("renderFutureChart").onclick=renderFutureNavChart;$("saveLearningPrediction").onclick=saveCurrentLearningPrediction;$("evaluateLearningPredictions").onclick=evaluateSelfLearningPredictions;$("resetSelfLearning").onclick=resetSelfLearningData;$("runMonte").onclick=runMonte;$("compareMonte").onclick=compareMonteMethods;$("runV25Dashboard").onclick=runV25Dashboard;$("exportV25Pdf").onclick=exportV25ReportPdf;$("calcFire").onclick=calcFire;$("calcStress").onclick=renderStress;$("analyzeMarket").onclick=()=>{analyzeMarketEnvironment();if(last.d){renderOutlook();buildMorningBrief()}};$("recalcOutlook").onclick=renderOutlook;$("saveSnapshot").onclick=saveSnapshot;$("clearHistory").onclick=clearHistory;$("whatWouldIDo").onclick=buildWhatWouldIDo;$("saveMemo").onclick=saveDailyMemo;$("clearMemo").onclick=clearDailyMemo;$("download").onclick=download;
+$("distFile").onchange=e=>load(e.target,"dist");$("growthFile").onchange=e=>load(e.target,"growth");$("analyze").onclick=analyze;$("runBacktest").onclick=runForecastValidation;$("runRegime").onclick=runRegimeAnalysis;$("runAdvisor").onclick=runIntegratedAdvisor;$("savePrediction").onclick=saveCurrentPrediction;$("evaluatePredictions").onclick=evaluateSavedPredictions;$("clearLearning").onclick=clearLearningData;$("runAccuracyMeasurement").onclick=runAccuracyMeasurement;$("runStatisticalEngine").onclick=runStatisticalForecast;$("runAdaptiveAI").onclick=runAdaptiveAI;$("resetAdaptiveAI").onclick=resetAdaptiveAI;$("runAutoMode").onclick=runAutoModeDiagnosis;$("loadAutoData").onclick=()=>loadAutomaticCsv();$("analyzeAutoData").onclick=analyzeAutomaticCsv;$("renderFutureChart").onclick=renderFutureNavChart;$("saveLearningPrediction").onclick=saveCurrentLearningPrediction;$("evaluateLearningPredictions").onclick=evaluateSelfLearningPredictions;$("resetSelfLearning").onclick=resetSelfLearningData;$("runMonte").onclick=runMonte;$("compareMonte").onclick=compareMonteMethods;$("runV25Dashboard").onclick=runV25Dashboard;$("recalcCrashBuy").onclick=renderCrashBuyAI;$("exportV25Pdf").onclick=exportV25ReportPdf;$("calcFire").onclick=calcFire;$("calcStress").onclick=renderStress;$("analyzeMarket").onclick=()=>{analyzeMarketEnvironment();if(last.d){renderOutlook();buildMorningBrief()}};$("recalcOutlook").onclick=renderOutlook;$("saveSnapshot").onclick=saveSnapshot;$("clearHistory").onclick=clearHistory;$("whatWouldIDo").onclick=buildWhatWouldIDo;$("saveMemo").onclick=saveDailyMemo;$("clearMemo").onclick=clearDailyMemo;$("download").onclick=download;
 $("taxMode").onchange=e=>$("taxRate").disabled=e.target.value==="before";
 try{const s=JSON.parse(localStorage.getItem("wcm5")||"{}");if(s.start)$("startDate").value=s.start;if(s.initial!=null)$("initial").value=s.initial;if(s.monthly!=null)$("monthly").value=s.monthly;if(s.day)$("day").value=s.day;if(s.taxMode)$("taxMode").value=s.taxMode;if(s.taxRate)$("taxRate").value=s.taxRate}catch(_){}
 if("serviceWorker"in navigator)navigator.serviceWorker.register("./sw.js").catch(()=>{});

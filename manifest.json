@@ -1,11 +1,11 @@
 {
-  "name": "WCM Analyzer Pro Ver.25",
+  "name": "WCM Analyzer Pro Ver.26",
   "short_name": "WCM Analyzer",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#07101d",
   "theme_color": "#08111f",
-  "description": "元本・分配金税区分・4期間予測・信頼度・貢献度・PDFを統合",
+  "description": "Ver.25機能＋暴落買いAI・推奨買付・追加口数・目標到達確率",
   "icons": [
     {
       "src": "./icon-192.svg",

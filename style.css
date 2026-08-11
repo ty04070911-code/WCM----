@@ -511,3 +511,14 @@ textarea{
   .panel{break-inside:avoid;border:1px solid #bbb;background:#fff;color:#111}
   .comment,.card,.tablewrap{background:#fff;color:#111}
 }
+
+/* Ver.26 暴落買いAI */
+.crash-buy-hero{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:14px}
+.crash-metric{background:rgba(15,23,42,.72);border:1px solid rgba(148,163,184,.22);border-radius:14px;padding:14px;min-width:0}
+.crash-metric .label{font-size:.78rem;color:#94a3b8;margin-bottom:6px}
+.crash-metric .value{font-size:1.35rem;font-weight:800;line-height:1.2;word-break:break-word}
+.crash-metric .sub{font-size:.75rem;color:#94a3b8;margin-top:6px;line-height:1.45}
+.crash-hot{border-color:rgba(239,68,68,.55);box-shadow:0 0 0 1px rgba(239,68,68,.08) inset}
+.crash-opportunity{border-color:rgba(34,197,94,.55);box-shadow:0 0 0 1px rgba(34,197,94,.08) inset}
+.crash-probability{font-size:1.55rem!important}
+@media(max-width:720px){.crash-buy-hero{grid-template-columns:1fr 1fr}.crash-metric{padding:12px}.crash-metric .value{font-size:1.15rem}}
