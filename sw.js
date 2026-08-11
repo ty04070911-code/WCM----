@@ -1,4 +1,4 @@
-const CACHE="wcm-analyzer-v271-recentered-model";
+const CACHE="wcm-analyzer-v272";
 const ASSETS=[
   "./",
   "./index.html",

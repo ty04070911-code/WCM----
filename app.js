@@ -656,14 +656,42 @@ function calmar(rows){
   return drawdown>0?cagr(rows)/drawdown:0
 }
 function monthlyWin(rows){const m=new Map();rows.forEach(r=>m.set(`${r.date.getFullYear()}-${r.date.getMonth()}`,r.nav));const v=[...m.values()];let w=0;for(let i=1;i<v.length;i++)if(v[i]>v[i-1])w++;return v.length>1?w/(v.length-1)*100:0}
-function plan(rows,initial,monthly,day){
-  const map=new Map();if(initial>0)map.set(rows[0].dateText,initial);
+function normalizeExtraInvestments(items=[]){
+  return (Array.isArray(items)?items:[])
+    .map(item=>({date:String(item?.date||"").trim(),amount:Math.max(Number(item?.amount)||0,0)}))
+    .filter(item=>/^\d{4}-\d{2}-\d{2}$/.test(item.date)&&item.amount>0)
+    .sort((a,b)=>a.date.localeCompare(b.date));
+}
+
+function plan(rows,initial,monthly,day,extraInvestments=[]){
+  const map=new Map();
+  const appliedExtras=[];
+  const ignoredExtras=[];
+  if(initial>0)map.set(rows[0].dateText,initial);
   const g=new Map();rows.forEach(r=>{const k=`${r.date.getFullYear()}-${r.date.getMonth()+1}`;(g.get(k)||g.set(k,[]).get(k)).push(r)});
   [...g.values()].slice(1).forEach(rs=>{if(monthly<=0)return;const r=rs.find(x=>x.date.getDate()>=day)||rs.at(-1);map.set(r.dateText,(map.get(r.dateText)||0)+monthly)});
+
+  const normalizedExtras=normalizeExtraInvestments(extraInvestments);
+  for(const item of normalizedExtras){
+    const target=new Date(item.date+"T00:00:00");
+    if(target<rows[0].date){
+      ignoredExtras.push({...item,reason:"分析開始日前"});
+      continue;
+    }
+    const tradeRow=rows.find(r=>r.date>=target);
+    if(!tradeRow){
+      ignoredExtras.push({...item,reason:"CSV最終日より後"});
+      continue;
+    }
+    map.set(tradeRow.dateText,(map.get(tradeRow.dateText)||0)+item.amount);
+    appliedExtras.push({...item,tradeDate:tradeRow.dateText});
+  }
+  map.appliedExtras=appliedExtras;
+  map.ignoredExtras=ignoredExtras;
   return map
 }
-function simDist(rows,initial,monthly,day,taxRate){
-  const p=plan(rows,initial,monthly,day),tm=1-taxRate/100;let ru=0,iu=0,principal=0,cash=0,tax=0;const h=[];
+function simDist(rows,initial,monthly,day,taxRate,extraInvestments=[]){
+  const p=plan(rows,initial,monthly,day,extraInvestments),tm=1-taxRate/100;let ru=0,iu=0,principal=0,cash=0,tax=0;const h=[];
   for(const r of rows){
     const a=p.get(r.dateText)||0;if(a>0){const u=a/r.nav*10000;ru+=u;iu+=u;principal+=a}
     if(r.distribution>0){
@@ -673,12 +701,12 @@ function simDist(rows,initial,monthly,day,taxRate){
     const market=ru*r.nav/10000,total=market+cash,reinvest=iu*r.nav/10000;
     h.push({date:r.date,dateText:r.dateText,principal,market,cash,total,reinvest,tax})
   }
-  return {principal,market:h.at(-1).market,cash,total:h.at(-1).total,reinvest:h.at(-1).reinvest,tax,history:h}
+  return {principal,market:h.at(-1).market,cash,total:h.at(-1).total,reinvest:h.at(-1).reinvest,tax,history:h,appliedExtras:p.appliedExtras||[],ignoredExtras:p.ignoredExtras||[]}
 }
-function simGrowth(rows,initial,monthly,day){
-  const p=plan(rows,initial,monthly,day);let units=0,principal=0;const h=[];
+function simGrowth(rows,initial,monthly,day,extraInvestments=[]){
+  const p=plan(rows,initial,monthly,day,extraInvestments);let units=0,principal=0;const h=[];
   for(const r of rows){const a=p.get(r.dateText)||0;if(a>0){units+=a/r.nav*10000;principal+=a}h.push({date:r.date,dateText:r.dateText,principal,value:units*r.nav/10000})}
-  return {principal,value:h.at(-1).value,history:h}
+  return {principal,value:h.at(-1).value,history:h,appliedExtras:p.appliedExtras||[],ignoredExtras:p.ignoredExtras||[]}
 }
 function makeRng(seed){let state=(Number(seed)||1)>>>0;return function(){state=(1664525*state+1013904223)>>>0;return state/4294967296}}
 function normalFromRng(rng){let u=0,v=0;while(!u)u=rng();while(!v)v=rng();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v)}
@@ -909,14 +937,65 @@ function fireMonteCarlo(){
   }
 }
 
+function createExtraInvestmentRow(item={}){
+  const row=document.createElement("div");
+  row.className="extra-invest-row";
+  row.innerHTML=`
+    <div class="field"><label>追加投資日</label><input class="extra-invest-date" type="date" value="${item.date||""}"></div>
+    <div class="field"><label>追加投資額</label><input class="extra-invest-amount" type="number" min="0" step="1000" inputmode="numeric" value="${Number(item.amount)||""}" placeholder="例：100000"></div>
+    <button type="button" class="gray extra-invest-delete">削除</button>`;
+  row.querySelector(".extra-invest-delete").onclick=()=>{row.remove();saveExtraInvestments();updateExtraInvestStatus()};
+  row.querySelectorAll("input").forEach(input=>input.addEventListener("change",()=>{saveExtraInvestments();updateExtraInvestStatus()}));
+  $("extraInvestmentRows").appendChild(row);
+  return row;
+}
+
+function getExtraInvestments(){
+  return normalizeExtraInvestments([...document.querySelectorAll(".extra-invest-row")].map(row=>({
+    date:row.querySelector(".extra-invest-date")?.value||"",
+    amount:+(row.querySelector(".extra-invest-amount")?.value||0)
+  })));
+}
+
+function saveExtraInvestments(){
+  try{localStorage.setItem("wcm-extra-investments-v272",JSON.stringify(getExtraInvestments()))}catch(_){}
+}
+
+function loadExtraInvestments(){
+  let items=[];
+  try{items=JSON.parse(localStorage.getItem("wcm-extra-investments-v272")||"[]")}catch(_){}
+  $("extraInvestmentRows").innerHTML="";
+  normalizeExtraInvestments(items).forEach(createExtraInvestmentRow);
+  updateExtraInvestStatus();
+}
+
+function updateExtraInvestStatus(applied=null,ignored=null){
+  const el=$("extraInvestStatus");
+  if(!el)return;
+  const items=getExtraInvestments();
+  if(applied!==null){
+    const total=(applied||[]).reduce((s,x)=>s+x.amount,0);
+    const ignoredCount=(ignored||[]).length;
+    el.className=`status ${ignoredCount?"bad":"ok"}`;
+    el.textContent=`追加投資 ${applied.length}件・${yen(total)}を計算へ反映${ignoredCount?` / 未反映 ${ignoredCount}件`:""}`;
+    return;
+  }
+  if(!items.length){el.className="status";el.textContent="追加投資は未登録です。";return}
+  el.className="status";
+  el.textContent=`登録済み ${items.length}件・合計 ${yen(items.reduce((s,x)=>s+x.amount,0))}`;
+}
+
 function analyze(){
   try{
     const s=new Date($("startDate").value+"T00:00:00"),start=Math.max(s,distData[0].date,growthData[0].date),end=Math.min(distData.at(-1).date,growthData.at(-1).date);
     if(start>=end)throw new Error("共通期間がありません");
     const d=distData.filter(r=>r.date>=start&&r.date<=end),g=growthData.filter(r=>r.date>=start&&r.date<=end);
     const initial=+$("initial").value||0,monthly=+$("monthly").value||0,day=+$("day").value||1,tax=$("taxMode").value==="after"?(+$("taxRate").value||0):0;
-    if(initial<=0&&monthly<=0)throw new Error("投資額を入力してください");
-    const ds=simDist(d,initial,monthly,day,tax),gs=simGrowth(g,initial,monthly,day);
+    const extraInvestments=getExtraInvestments();
+    if(initial<=0&&monthly<=0&&!extraInvestments.length)throw new Error("投資額を入力してください");
+    const ds=simDist(d,initial,monthly,day,tax,extraInvestments),gs=simGrowth(g,initial,monthly,day,extraInvestments);
+    saveExtraInvestments();
+    updateExtraInvestStatus(ds.appliedExtras,ds.ignoredExtras);
     const rs=[result("分配金受取",ds.principal,ds.total),result("分配金再投資",ds.principal,ds.reinvest),result("資産成長型",gs.principal,gs.value)];
     last={d,g,ds,gs,rs};
     try{
@@ -971,7 +1050,7 @@ function analyze(){
     renderStress();
     lineChart($("assetChart"),[{name:"元本",color:"#64748b",values:merged.map(x=>x.principal)},{name:"受取",color:"#f59e0b",values:merged.map(x=>x.total)},{name:"再投資",color:"#3b82f6",values:merged.map(x=>x.reinvest)},{name:"成長型",color:"#22c55e",values:merged.map(x=>x.growth)}]);
     lineChart($("navChart"),[{name:"予想分配型",color:"#a855f7",values:d.map(x=>x.nav/d[0].nav*100)},{name:"資産成長型",color:"#22c55e",values:g.map(x=>x.nav/g[0].nav*100)}]);
-    $("resultArea").hidden=false;$("mainStatus").className="status ok";$("mainStatus").textContent="分析完了";localStorage.setItem("wcm5",JSON.stringify({start:$("startDate").value,initial,monthly,day,taxMode:$("taxMode").value,taxRate:$("taxRate").value}));
+    $("resultArea").hidden=false;$("mainStatus").className="status ok";$("mainStatus").textContent="分析完了";localStorage.setItem("wcm5",JSON.stringify({start:$("startDate").value,initial,monthly,day,taxMode:$("taxMode").value,taxRate:$("taxRate").value,extraInvestments}));
     $("resultArea").scrollIntoView({behavior:"smooth"})
   }catch(e){$("mainStatus").className="status bad";$("mainStatus").textContent=`分析エラー：${e.message}`}
 }
@@ -7368,7 +7447,7 @@ const CrashBuyEngine=(()=>{
     return out;
   }
 
-  function probability(rows,{units,baseMonthly,target,years,runs}){
+  function probability(rows,{units,baseMonthly,target,years,runs,extraInvestments=[]}){
     const state=currentState(rows);
     const empirical=empiricalReturns(rows);
     if(empirical.length<30)throw new Error("到達確率の計算に必要な日次データが不足しています。");
@@ -7382,6 +7461,17 @@ const CrashBuyEngine=(()=>{
     target=Math.max(1,Number(target)||3000000);
     years=Math.max(1,Math.floor(Number(years)||1));
     runs=Math.max(200,Math.floor(Number(runs)||3000));
+
+    // Ver.27.2: CSV最終日より後に登録された日付指定の追加投資を将来シミュレーションへ反映。
+    const latestDate=rows.at(-1).date;
+    const futureExtras=normalizeExtraInvestments(extraInvestments).map(item=>{
+      const d=new Date(item.date+"T00:00:00");
+      const calendarDays=Math.max(0,(d-latestDate)/86400000);
+      const simDay=Math.max(1,Math.round(calendarDays*252/365));
+      return {...item,simDay};
+    }).filter(item=>new Date(item.date+"T00:00:00")>latestDate&&item.simDay<=years*252);
+    const futureExtraMap=new Map();
+    for(const item of futureExtras)futureExtraMap.set(item.simDay,(futureExtraMap.get(item.simDay)||0)+item.amount);
 
     // Ver.27 混合モデル:
     // 45% 過去実績、40% 長期期待リターン、15% 暴落ストレス。
@@ -7457,6 +7547,8 @@ const CrashBuyEngine=(()=>{
         const dd=peak>0?(tr/peak-1)*100:0;
 
         if(day%21===0)portfolio+=baseMonthly;
+        const scheduledExtra=futureExtraMap.get(day)||0;
+        if(scheduledExtra>0)portfolio+=scheduledExtra;
 
         const depth=-dd;
         for(const tier of TIERS){
@@ -7478,7 +7570,7 @@ const CrashBuyEngine=(()=>{
       low:quantile(endings,.1),
       high:quantile(endings,.9),
       medianHitDays:hitDays.length?quantile(hitDays,.5):null,
-      runs,years,target,startValue,
+      runs,years,target,startValue,futureExtras,
       model:{weights:WEIGHTS,longTermAnnualReturn:LONG_TERM_ANNUAL_RETURN,historicalDriftCap:HISTORICAL_DRIFT_CAP,longTermAnnualVol:LONG_TERM_ANNUAL_VOL}
     };
   }
@@ -7503,7 +7595,7 @@ function renderCrashBuyAI(){
     const rec=CrashBuyEngine.recommendation(state.drawdown,base);
     const addUnits=state.nav>0?rec.total/state.nav*10000:0;
     const extraUnits=state.nav>0?rec.extra/state.nav*10000:0;
-    const prob=CrashBuyEngine.probability(last.d,{units,baseMonthly:base,target,years,runs});
+    const prob=CrashBuyEngine.probability(last.d,{units,baseMonthly:base,target,years,runs,extraInvestments:getExtraInvestments()});
     last.crashBuy={state,rec,addUnits,extraUnits,prob};
 
     const ddClass=(-state.drawdown)>=20?"crash-hot":(-state.drawdown)>=10?"crash-opportunity":"";
@@ -7541,8 +7633,9 @@ function renderCrashBuyAI(){
 予想追加口数：約${(addUnits/10000).toFixed(2)}万口
 ${years}年以内に${yen(target)}へ到達する推定確率：${prob.probability.toFixed(1)}%
 ${hitText}
+将来の指定追加投資：${prob.futureExtras.length}件・${yen(prob.futureExtras.reduce((s,x)=>s+x.amount,0))}
 
-Ver.27.1確率モデル：過去実績45%＋長期期待リターン40%（年率7%・ボラ22%）＋暴落ストレス15%を混合。過去実績成分は値動きの形だけを利用し、平均収益率は年率9%を上限として再中心化します。通常積立を毎月、−10/−15/−20/−25/−30/−40%の各段階の追加買付を1暴落局面につき1回だけ実行します。直近の好成績を10年先へそのまま外挿しない参考シミュレーションで、将来の成果を保証しません。`;
+Ver.27.2確率モデル：過去実績45%＋長期期待リターン40%（年率7%・ボラ22%）＋暴落ストレス15%を混合。過去実績成分は値動きの形だけを利用し、平均収益率は年率9%を上限として再中心化します。通常積立を毎月、−10/−15/−20/−25/−30/−40%の各段階の追加買付を1暴落局面につき1回だけ実行します。直近の好成績を10年先へそのまま外挿しない参考シミュレーションで、将来の成果を保証しません。`;
   }catch(error){
     console.error("暴落買いAIエラー",error);
     hero.innerHTML=`<div class="status bad">暴落買いAIエラー：${error.message}</div>`;
@@ -7570,7 +7663,7 @@ function runV25Dashboard(){
       $("exportV25Pdf").disabled=false;
       status.className="status ok";
       renderCrashBuyAI();
-      status.textContent="Ver.26総合分析が完了しました。";
+      status.textContent="Ver.27.2総合分析が完了しました。";
     }catch(error){
       console.error("Ver.25総合分析エラー",error);
       status.className="status bad";
@@ -7837,7 +7930,7 @@ function renderV25ForecastActual(rows){
 function exportV25ReportPdf(){
   if(!last.v25){
     $("v25Status").className="status bad";
-    $("v25Status").textContent="先にVer.26総合分析を実行してください。";
+    $("v25Status").textContent="先にVer.27.2総合分析を実行してください。";
     return;
   }
 
@@ -7872,7 +7965,7 @@ function exportV25ReportPdf(){
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width">
-<title>WCM Analyzer Pro Ver.25 分析レポート</title>
+<title>WCM Analyzer Pro Ver.27.2 分析レポート</title>
 <style>
   body{font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue","Noto Sans JP",sans-serif;margin:24px;color:#172033;background:#fff}
   h1{font-size:26px;margin-bottom:4px}
@@ -7899,7 +7992,7 @@ function exportV25ReportPdf(){
 </style>
 </head>
 <body>
-<h1>WCM Analyzer Pro Ver.25 分析レポート</h1>
+<h1>WCM Analyzer Pro Ver.27.2 分析レポート</h1>
 <p>作成日時：${new Date().toLocaleString("ja-JP")}</p>
 ${body}
 <p style="font-size:10px;color:#64748b;margin-top:30px">
@@ -7925,8 +8018,10 @@ document.querySelectorAll(".tab").forEach(button=>{
 });
 $("distFile").onchange=e=>load(e.target,"dist");$("growthFile").onchange=e=>load(e.target,"growth");$("analyze").onclick=analyze;$("runBacktest").onclick=runForecastValidation;$("runRegime").onclick=runRegimeAnalysis;$("runAdvisor").onclick=runIntegratedAdvisor;$("savePrediction").onclick=saveCurrentPrediction;$("evaluatePredictions").onclick=evaluateSavedPredictions;$("clearLearning").onclick=clearLearningData;$("runAccuracyMeasurement").onclick=runAccuracyMeasurement;$("runStatisticalEngine").onclick=runStatisticalForecast;$("runAdaptiveAI").onclick=runAdaptiveAI;$("resetAdaptiveAI").onclick=resetAdaptiveAI;$("runAutoMode").onclick=runAutoModeDiagnosis;$("loadAutoData").onclick=()=>loadAutomaticCsv();$("analyzeAutoData").onclick=analyzeAutomaticCsv;$("renderFutureChart").onclick=renderFutureNavChart;$("saveLearningPrediction").onclick=saveCurrentLearningPrediction;$("evaluateLearningPredictions").onclick=evaluateSelfLearningPredictions;$("resetSelfLearning").onclick=resetSelfLearningData;$("runMonte").onclick=runMonte;$("compareMonte").onclick=compareMonteMethods;$("runV25Dashboard").onclick=runV25Dashboard;$("recalcCrashBuy").onclick=renderCrashBuyAI;$("exportV25Pdf").onclick=exportV25ReportPdf;$("calcFire").onclick=calcFire;$("calcStress").onclick=renderStress;$("analyzeMarket").onclick=()=>{analyzeMarketEnvironment();if(last.d){renderOutlook();buildMorningBrief()}};$("recalcOutlook").onclick=renderOutlook;$("saveSnapshot").onclick=saveSnapshot;$("clearHistory").onclick=clearHistory;$("whatWouldIDo").onclick=buildWhatWouldIDo;$("saveMemo").onclick=saveDailyMemo;$("clearMemo").onclick=clearDailyMemo;$("download").onclick=download;
 $("taxMode").onchange=e=>$("taxRate").disabled=e.target.value==="before";
-try{const s=JSON.parse(localStorage.getItem("wcm5")||"{}");if(s.start)$("startDate").value=s.start;if(s.initial!=null)$("initial").value=s.initial;if(s.monthly!=null)$("monthly").value=s.monthly;if(s.day)$("day").value=s.day;if(s.taxMode)$("taxMode").value=s.taxMode;if(s.taxRate)$("taxRate").value=s.taxRate}catch(_){}
-if("serviceWorker"in navigator)navigator.serviceWorker.register("./sw.js").catch(()=>{});
+$("addExtraInvestment").onclick=()=>{createExtraInvestmentRow({});updateExtraInvestStatus();const rows=$("extraInvestmentRows").querySelectorAll(".extra-invest-row");rows[rows.length-1]?.querySelector(".extra-invest-date")?.focus()};
+try{const s=JSON.parse(localStorage.getItem("wcm5")||"{}");if(s.start)$("startDate").value=s.start;if(s.initial!=null)$("initial").value=s.initial;if(s.monthly!=null)$("monthly").value=s.monthly;if(s.day)$("day").value=s.day;if(s.taxMode)$("taxMode").value=s.taxMode;if(s.taxRate)$("taxRate").value=s.taxRate;if(Array.isArray(s.extraInvestments)&&!localStorage.getItem("wcm-extra-investments-v272"))localStorage.setItem("wcm-extra-investments-v272",JSON.stringify(s.extraInvestments))}catch(_){}
+loadExtraInvestments();
+if("serviceWorker"in navigator)navigator.serviceWorker.register("./sw.js?v=272").catch(()=>{});
 restoreMarketInputs();
 
 restoreOutlookSettings();
