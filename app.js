@@ -7204,14 +7204,56 @@ const V25DashboardEngine=(()=>{
       });
     }
 
-    const latest=history.at(-1)||{
-      principal:0,costBasis:0,marketValue:0,cashDistributions:0,totalValue:0
+    let latest=history.at(-1)||{
+      principal:0,costBasis:0,marketValue:0,cashDistributions:0,totalValue:0,units:0,nav:0
     };
+
+    // Ver.27.4: 証券会社の現在値をアンカーとして優先できる。
+    // 過去の積立・追加投資・分配履歴は分析用に再構築するが、
+    // 現在評価額と現在の取得原価は実績値で上書きし、誤差の累積を将来へ持ち込まない。
+    const actualMode=(config.actualMode||"estimated")==="actual";
+    let actualAnchor=null;
+    if(actualMode){
+      const actualUnits=Math.max(0,Number(config.actualUnits)||0);
+      const actualNav=Math.max(0,Number(config.actualNav)||0);
+      const actualAvgCost=Math.max(0,Number(config.actualAvgCost)||0);
+      let actualAcquisitionTotal=Math.max(0,Number(config.actualAcquisitionTotal)||0);
+      if(actualAcquisitionTotal<=0&&actualUnits>0&&actualAvgCost>0){
+        actualAcquisitionTotal=actualUnits*actualAvgCost/10000;
+      }
+      if(actualUnits>0&&actualNav>0){
+        const actualMarketValue=actualUnits*actualNav/10000;
+        const actualCostBasis=actualAcquisitionTotal>0
+          ?actualAcquisitionTotal
+          :(actualUnits>0&&actualAvgCost>0?actualUnits*actualAvgCost/10000:latest.costBasis);
+        actualAnchor={
+          units:actualUnits,
+          nav:actualNav,
+          averageCostPer10000:actualAvgCost>0?actualAvgCost:(actualUnits>0?actualCostBasis/actualUnits*10000:0),
+          acquisitionTotal:actualCostBasis,
+          marketValue:actualMarketValue,
+          estimatedMarketValue:latest.marketValue,
+          estimatedUnits:latest.units,
+          estimatedCostBasis:latest.costBasis
+        };
+        latest={
+          ...latest,
+          units:actualUnits,
+          nav:actualNav,
+          costBasis:actualCostBasis,
+          marketValue:actualMarketValue,
+          totalValue:actualMarketValue+latest.cashDistributions,
+          actualAnchored:true
+        };
+        if(history.length)history[history.length-1]={...history[history.length-1],...latest};
+      }
+    }
 
     return {
       history,
       distributions,
       latest,
+      actualAnchor,
       ordinaryGross,
       specialGross,
       taxPaid,
@@ -7447,7 +7489,7 @@ const CrashBuyEngine=(()=>{
     return out;
   }
 
-  function probability(rows,{units,baseMonthly,target,years,runs,extraInvestments=[]}){
+  function probability(rows,{units,baseMonthly,target,years,runs,extraInvestments=[],actualNav=0}){
     const state=currentState(rows);
     const empirical=empiricalReturns(rows);
     if(empirical.length<30)throw new Error("到達確率の計算に必要な日次データが不足しています。");
@@ -7462,7 +7504,7 @@ const CrashBuyEngine=(()=>{
     years=Math.max(1,Math.floor(Number(years)||1));
     runs=Math.max(200,Math.floor(Number(runs)||3000));
 
-    // Ver.27.2: CSV最終日より後に登録された日付指定の追加投資を将来シミュレーションへ反映。
+    // Ver.27.4: CSV最終日より後に登録された日付指定の追加投資を将来シミュレーションへ反映。
     const latestDate=rows.at(-1).date;
     const futureExtras=normalizeExtraInvestments(extraInvestments).map(item=>{
       const d=new Date(item.date+"T00:00:00");
@@ -7494,7 +7536,8 @@ const CrashBuyEngine=(()=>{
       return Math.exp(dailyMu+dailySigma*normal(rng))-1;
     }
 
-    const startValue=units*state.nav/10000;
+    const startNav=Math.max(0,Number(actualNav)||0)||state.nav;
+    const startValue=units*startNav/10000;
     const startTR=state.currentTR;
     const tradingDays=years*252;
     let success=0;
@@ -7592,10 +7635,14 @@ function renderCrashBuyAI(){
     const years=+$("crashTargetYears").value||1;
     const runs=+$("crashTargetRuns").value||3000;
     const state=CrashBuyEngine.currentState(last.d);
+    const actualAnchor=last.v25?.capital?.actualAnchor||null;
+    const purchaseNav=actualAnchor?.nav>0?actualAnchor.nav:state.nav;
+    const effectiveUnits=actualAnchor?.units>0?actualAnchor.units:units;
+    if(actualAnchor&&$("crashCurrentUnits"))$("crashCurrentUnits").value=Math.round(effectiveUnits);
     const rec=CrashBuyEngine.recommendation(state.drawdown,base);
-    const addUnits=state.nav>0?rec.total/state.nav*10000:0;
-    const extraUnits=state.nav>0?rec.extra/state.nav*10000:0;
-    const prob=CrashBuyEngine.probability(last.d,{units,baseMonthly:base,target,years,runs,extraInvestments:getExtraInvestments()});
+    const addUnits=purchaseNav>0?rec.total/purchaseNav*10000:0;
+    const extraUnits=purchaseNav>0?rec.extra/purchaseNav*10000:0;
+    const prob=CrashBuyEngine.probability(last.d,{units:effectiveUnits,baseMonthly:base,target,years,runs,extraInvestments:getExtraInvestments(),actualNav:purchaseNav});
     last.crashBuy={state,rec,addUnits,extraUnits,prob};
 
     const ddClass=(-state.drawdown)>=20?"crash-hot":(-state.drawdown)>=10?"crash-opportunity":"";
@@ -7613,7 +7660,7 @@ function renderCrashBuyAI(){
       <div class="crash-metric">
         <div class="label">予想追加口数</div>
         <div class="value">${(addUnits/10000).toFixed(2)}万口</div>
-        <div class="sub">うち暴落追加分 ${(extraUnits/10000).toFixed(2)}万口<br>最新NAV ${Math.round(state.nav).toLocaleString()}円</div>
+        <div class="sub">うち暴落追加分 ${(extraUnits/10000).toFixed(2)}万口<br>最新NAV ${Math.round(purchaseNav).toLocaleString()}円</div>
       </div>
       <div class="crash-metric">
         <div class="label">${yen(target)}到達確率</div>
@@ -7635,7 +7682,7 @@ ${years}年以内に${yen(target)}へ到達する推定確率：${prob.probabili
 ${hitText}
 将来の指定追加投資：${prob.futureExtras.length}件・${yen(prob.futureExtras.reduce((s,x)=>s+x.amount,0))}
 
-Ver.27.3確率モデル：過去実績45%＋長期期待リターン40%（年率7%・ボラ22%）＋暴落ストレス15%を混合。過去実績成分は値動きの形だけを利用し、平均収益率は年率9%を上限として再中心化します。通常積立を毎月、−10/−15/−20/−25/−30/−40%の各段階の追加買付を1暴落局面につき1回だけ実行します。直近の好成績を10年先へそのまま外挿しない参考シミュレーションで、将来の成果を保証しません。`;
+Ver.27.4確率モデル：過去実績45%＋長期期待リターン40%（年率7%・ボラ22%）＋暴落ストレス15%を混合。過去実績成分は値動きの形だけを利用し、平均収益率は年率9%を上限として再中心化します。通常積立を毎月、−10/−15/−20/−25/−30/−40%の各段階の追加買付を1暴落局面につき1回だけ実行します。直近の好成績を10年先へそのまま外挿しない参考シミュレーションで、将来の成果を保証しません。`;
   }catch(error){
     console.error("暴落買いAIエラー",error);
     hero.innerHTML=`<div class="status bad">暴落買いAIエラー：${error.message}</div>`;
@@ -7656,15 +7703,30 @@ function runV25Dashboard(){
         taxRate:+$("v25DistributionTax").value||20.315,
         distributionMode:$("v25DistributionMode").value,
         riskStyle:$("v25RiskStyle").value,
-        extraInvestments:getExtraInvestments()
+        extraInvestments:getExtraInvestments(),
+        actualMode:$("v25ActualMode")?.value||"estimated",
+        actualUnits:+$("v25ActualUnits")?.value||0,
+        actualNav:+$("v25ActualNav")?.value||0,
+        actualAvgCost:+$("v25ActualAvgCost")?.value||0,
+        actualAcquisitionTotal:+$("v25ActualAcquisitionTotal")?.value||0
       });
 
       last.v25=result;
+      if(result.capital.actualAnchor){
+        if($("crashCurrentUnits"))$("crashCurrentUnits").value=Math.round(result.capital.actualAnchor.units);
+        const preview=$("v25ActualAnchorPreview");
+        if(preview){
+          const a=result.capital.actualAnchor;
+          preview.textContent=`実績アンカー適用：${Math.round(a.units).toLocaleString()}口 × 基準価額 ${Math.round(a.nav).toLocaleString()}円 → 現在評価額 ${yen(a.marketValue)}。取得原価 ${yen(a.acquisitionTotal)}。履歴推定評価額との差 ${yen(a.marketValue-a.estimatedMarketValue)}。`;
+        }
+      }else if($("v25ActualAnchorPreview")){
+        $("v25ActualAnchorPreview").textContent="履歴推定モード：初期投資・積立・追加投資・分配再投資から現在値を再構築しています。";
+      }
       renderV25Dashboard(result);
       $("exportV25Pdf").disabled=false;
       status.className="status ok";
       renderCrashBuyAI();
-      status.textContent="Ver.27.3総合分析が完了しました。";
+      status.textContent="Ver.27.4総合分析が完了しました。";
     }catch(error){
       console.error("Ver.25総合分析エラー",error);
       status.className="status bad";
@@ -7763,13 +7825,22 @@ ${decisionText}
       <div class="card-value">${yen(latest.principal)}</div>
     </div>
     <div class="card">
-      <div class="card-title">推定個別元本</div>
+      <div class="card-title">${result.capital.actualAnchor?"取得総額（実績）":"推定個別元本"}</div>
       <div class="card-value">${yen(latest.costBasis)}</div>
     </div>
     <div class="card">
-      <div class="card-title">現在評価額</div>
+      <div class="card-title">現在評価額${result.capital.actualAnchor?"（実績）":""}</div>
       <div class="card-value">${yen(latest.marketValue)}</div>
     </div>
+    ${result.capital.actualAnchor?`
+    <div class="card">
+      <div class="card-title">実保有口数</div>
+      <div class="card-value">${Math.round(result.capital.actualAnchor.units).toLocaleString()}口</div>
+    </div>
+    <div class="card">
+      <div class="card-title">平均取得価額（実績）</div>
+      <div class="card-value">${(Math.round(result.capital.actualAnchor.averageCostPer10000*100)/100).toLocaleString("ja-JP")}円</div>
+    </div>`:""}
     <div class="card">
       <div class="card-title">現金分配金</div>
       <div class="card-value">${yen(latest.cashDistributions)}</div>
@@ -7838,11 +7909,13 @@ ${decisionText}
 
 実際の税務上の個別元本・普通分配・元本払戻金は、証券会社の取引報告書や税務資料で確認してください。
 
-積立日は入力欄の「積立日」を使い、その日が休業日の場合はCSV上で同月の次の営業日、無ければ月末営業日に購入したものとして計算しています。`;
+積立日は入力欄の「積立日」を使い、その日が休業日の場合はCSV上で同月の次の営業日、無ければ月末営業日に購入したものとして計算しています。
+
+${result.capital.actualAnchor?`Ver.27.4実績優先モード：現在評価額・保有口数・取得原価は証券会社の入力値を基準点として固定しています。履歴グラフの過去部分と普通/特別分配は推定値です。`:"履歴推定モード：現在値も取引履歴から再構築した推定値です。"}`;
 
   renderV25ForecastActual(result.predictionActual);
 
-  $("v25Report").textContent=`WCM Analyzer Pro Ver.26 総合分析
+  $("v25Report").textContent=`WCM Analyzer Pro Ver.27.4 総合分析
 
 作成日時：
 ${new Date(result.createdAt).toLocaleString("ja-JP")}
@@ -7857,9 +7930,21 @@ ${result.confidence.toFixed(0)}点
 ${yen(latest.principal)}
 
 現在評価額：
-${yen(latest.marketValue)}
+${yen(latest.marketValue)}${result.capital.actualAnchor?"（証券会社実績アンカー）":""}
 
-評価額と元本の差：
+${result.capital.actualAnchor?`実保有口数：
+${Math.round(result.capital.actualAnchor.units).toLocaleString()}口
+
+現在基準価額：
+${Math.round(result.capital.actualAnchor.nav).toLocaleString()}円
+
+平均取得価額：
+${result.capital.actualAnchor.averageCostPer10000.toLocaleString("ja-JP",{maximumFractionDigits:2})}円
+
+取得総額：
+${yen(result.capital.actualAnchor.acquisitionTotal)}
+
+`:""}評価額と元本の差：
 ${yen(latest.marketValue-latest.principal)}
 
 普通分配推定累計：
@@ -7931,7 +8016,7 @@ function renderV25ForecastActual(rows){
 function exportV25ReportPdf(){
   if(!last.v25){
     $("v25Status").className="status bad";
-    $("v25Status").textContent="先にVer.27.2総合分析を実行してください。";
+    $("v25Status").textContent="先にVer.27.4総合分析を実行してください。";
     return;
   }
 
@@ -7966,7 +8051,7 @@ function exportV25ReportPdf(){
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width">
-<title>WCM Analyzer Pro Ver.27.2 分析レポート</title>
+<title>WCM Analyzer Pro Ver.27.4 分析レポート</title>
 <style>
   body{font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue","Noto Sans JP",sans-serif;margin:24px;color:#172033;background:#fff}
   h1{font-size:26px;margin-bottom:4px}
@@ -7993,7 +8078,7 @@ function exportV25ReportPdf(){
 </style>
 </head>
 <body>
-<h1>WCM Analyzer Pro Ver.27.2 分析レポート</h1>
+<h1>WCM Analyzer Pro Ver.27.4 分析レポート</h1>
 <p>作成日時：${new Date().toLocaleString("ja-JP")}</p>
 ${body}
 <p style="font-size:10px;color:#64748b;margin-top:30px">
@@ -8017,6 +8102,33 @@ document.querySelectorAll(".tab").forEach(button=>{
     $(button.dataset.page).hidden=false;
   };
 });
+function saveActualAnchorSettings(){
+  try{
+    localStorage.setItem("wcm-v274-actual-anchor",JSON.stringify({
+      mode:$("v25ActualMode")?.value||"actual",
+      units:+$("v25ActualUnits")?.value||0,
+      nav:+$("v25ActualNav")?.value||0,
+      avgCost:+$("v25ActualAvgCost")?.value||0,
+      acquisitionTotal:+$("v25ActualAcquisitionTotal")?.value||0
+    }));
+  }catch(_){}
+}
+function restoreActualAnchorSettings(){
+  try{
+    const s=JSON.parse(localStorage.getItem("wcm-v274-actual-anchor")||"null");
+    if(!s)return;
+    if($("v25ActualMode"))$("v25ActualMode").value=s.mode||"actual";
+    if($("v25ActualUnits")&&Number.isFinite(+s.units))$("v25ActualUnits").value=s.units;
+    if($("v25ActualNav")&&Number.isFinite(+s.nav))$("v25ActualNav").value=s.nav;
+    if($("v25ActualAvgCost")&&Number.isFinite(+s.avgCost))$("v25ActualAvgCost").value=s.avgCost;
+    if($("v25ActualAcquisitionTotal")&&Number.isFinite(+s.acquisitionTotal))$("v25ActualAcquisitionTotal").value=s.acquisitionTotal;
+  }catch(_){}
+}
+restoreActualAnchorSettings();
+["v25ActualMode","v25ActualUnits","v25ActualNav","v25ActualAvgCost","v25ActualAcquisitionTotal"].forEach(id=>{
+  const el=$(id);if(el)el.addEventListener("change",saveActualAnchorSettings);
+});
+
 $("distFile").onchange=e=>load(e.target,"dist");$("growthFile").onchange=e=>load(e.target,"growth");$("analyze").onclick=analyze;$("runBacktest").onclick=runForecastValidation;$("runRegime").onclick=runRegimeAnalysis;$("runAdvisor").onclick=runIntegratedAdvisor;$("savePrediction").onclick=saveCurrentPrediction;$("evaluatePredictions").onclick=evaluateSavedPredictions;$("clearLearning").onclick=clearLearningData;$("runAccuracyMeasurement").onclick=runAccuracyMeasurement;$("runStatisticalEngine").onclick=runStatisticalForecast;$("runAdaptiveAI").onclick=runAdaptiveAI;$("resetAdaptiveAI").onclick=resetAdaptiveAI;$("runAutoMode").onclick=runAutoModeDiagnosis;$("loadAutoData").onclick=()=>loadAutomaticCsv();$("analyzeAutoData").onclick=analyzeAutomaticCsv;$("renderFutureChart").onclick=renderFutureNavChart;$("saveLearningPrediction").onclick=saveCurrentLearningPrediction;$("evaluateLearningPredictions").onclick=evaluateSelfLearningPredictions;$("resetSelfLearning").onclick=resetSelfLearningData;$("runMonte").onclick=runMonte;$("compareMonte").onclick=compareMonteMethods;$("runV25Dashboard").onclick=runV25Dashboard;$("recalcCrashBuy").onclick=renderCrashBuyAI;$("exportV25Pdf").onclick=exportV25ReportPdf;$("calcFire").onclick=calcFire;$("calcStress").onclick=renderStress;$("analyzeMarket").onclick=()=>{analyzeMarketEnvironment();if(last.d){renderOutlook();buildMorningBrief()}};$("recalcOutlook").onclick=renderOutlook;$("saveSnapshot").onclick=saveSnapshot;$("clearHistory").onclick=clearHistory;$("whatWouldIDo").onclick=buildWhatWouldIDo;$("saveMemo").onclick=saveDailyMemo;$("clearMemo").onclick=clearDailyMemo;$("download").onclick=download;
 $("taxMode").onchange=e=>$("taxRate").disabled=e.target.value==="before";
 $("addExtraInvestment").onclick=()=>{createExtraInvestmentRow({});updateExtraInvestStatus();const rows=$("extraInvestmentRows").querySelectorAll(".extra-invest-row");rows[rows.length-1]?.querySelector(".extra-invest-date")?.focus()};

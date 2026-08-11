@@ -12,15 +12,15 @@
   <meta name="apple-mobile-web-app-title" content="WCM Analyzer">
   <link rel="manifest" href="./manifest.json">
   <link rel="apple-touch-icon" href="./icon-192.svg">
-  <title>WCM Analyzer Pro Ver.27.3</title>
-<link rel="stylesheet" href="./style.css?v=273">
+  <title>WCM Analyzer Pro Ver.27.4</title>
+<link rel="stylesheet" href="./style.css?v=274">
 </head>
 <body>
 <main class="app">
 <header>
   <h1>WCM Analyzer Pro</h1>
-  <span class="badge">iPhone Edition Ver.27.3</span>
-  <p class="lead">Ver.27.3では、過去実績＋長期期待＋暴落ストレスの混合モデルに加え、日付と金額を自由に指定できる「追加投資履歴」を搭載。過去の一括買付・臨時買付を元本・口数・再投資へ反映し、将来日付の追加投資は目標到達確率にも反映します。</p>
+  <span class="badge">iPhone Edition Ver.27.4</span>
+  <p class="lead">Ver.27.4では、Ver.27.3の追加投資履歴と混合確率モデルに加え、楽天証券などの実保有口数・現在基準価額・平均取得価額・取得総額を「現在値アンカー」として優先できる実績モードを追加しました。</p>
 </header>
 
 <section class="panel auto-data-panel">
@@ -91,7 +91,7 @@
     <button class="tab" data-page="outlook">今後の見通し</button>
     <button class="tab" data-page="forecast">将来予測</button>
     <button class="tab" data-page="selflearning">自己学習AI</button>
-    <button class="tab" data-page="v25dashboard">Ver.27.3総合</button>
+    <button class="tab" data-page="v25dashboard">Ver.27.4総合</button>
     <button class="tab" data-page="validation">精度検証</button>
     <button class="tab" data-page="regime">相場局面</button>
     <button class="tab" data-page="advisor">総合判断</button>
@@ -816,7 +816,7 @@
 
   <section id="v25dashboard" class="page" hidden>
     <div class="panel v25-hero">
-      <h2>WCM AI統合ダッシュボード Ver.27.3</h2>
+      <h2>WCM AI統合ダッシュボード Ver.27.4</h2>
       <p class="small">
         積立元本、実際の積立日、分配金再投資、普通分配・特別分配の推定、
         4期間予測、自己学習結果をまとめて参考判断を作成します。
@@ -844,8 +844,21 @@
         </div>
       </div>
 
+      <div class="panel actual-anchor-panel" style="margin-top:14px">
+        <h3>現在値アンカー（証券会社の実績を優先）</h3>
+        <p class="small">実績優先では、過去履歴は分析用に再構築しつつ、現在評価額・現在保有口数・現在の取得原価は証券会社の表示値を基準点にします。将来シミュレーションもこの実績値から開始します。</p>
+        <div class="grid">
+          <div class="field"><label>現在値モード</label><select id="v25ActualMode"><option value="actual" selected>実績優先</option><option value="estimated">履歴から推定</option></select></div>
+          <div class="field"><label>実保有口数</label><input id="v25ActualUnits" type="number" inputmode="numeric" min="0" step="1" value="1818299"></div>
+          <div class="field"><label>現在基準価額</label><input id="v25ActualNav" type="number" inputmode="decimal" min="0" step="1" value="12327"></div>
+          <div class="field"><label>平均取得価額（1万口あたり）</label><input id="v25ActualAvgCost" type="number" inputmode="decimal" min="0" step="0.01" value="12691.03"></div>
+          <div class="field"><label>取得総額</label><input id="v25ActualAcquisitionTotal" type="number" inputmode="numeric" min="0" step="1" value="2307608"></div>
+        </div>
+        <div id="v25ActualAnchorPreview" class="comment" style="margin-top:12px">実績優先：保有口数 × 現在基準価額から現在評価額を固定します。</div>
+      </div>
+
       <div class="grid">
-        <button id="runV25Dashboard" class="primary">Ver.27.3総合分析を実行</button>
+        <button id="runV25Dashboard" class="primary">Ver.27.4総合分析を実行</button>
         <button id="exportV25Pdf" class="green" disabled>分析結果をPDF保存</button>
       </div>
 
@@ -904,7 +917,7 @@
     </div>
 
     <div class="panel">
-      <h2>Ver.27.3総合レポート</h2>
+      <h2>Ver.27.4総合レポート</h2>
       <div id="v25Report" class="comment"></div>
     </div>
   </section>
@@ -1071,6 +1084,6 @@
 </section>
 </main>
 
-<script src="./app.js?v=273" defer></script>
+<script src="./app.js?v=274" defer></script>
 </body>
 </html>
