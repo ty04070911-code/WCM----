@@ -1,4 +1,4 @@
-const CACHE="wcm-analyzer-v272";
+const CACHE="wcm-analyzer-v273";
 const ASSETS=[
   "./",
   "./index.html",

@@ -7109,8 +7109,8 @@ const V25DashboardEngine=(()=>{
     baseline:"従来アンサンブル"
   };
 
-  function getPurchasePlan(rows,initial,monthly,day){
-    return plan(rows,initial,monthly,day);
+  function getPurchasePlan(rows,initial,monthly,day,extraInvestments=[]){
+    return plan(rows,initial,monthly,day,extraInvestments);
   }
 
   function simulateCostBasis(rows,config){
@@ -7119,7 +7119,7 @@ const V25DashboardEngine=(()=>{
     const day=clamp(Math.round(+config.day||1),1,31);
     const taxRate=clamp(+config.taxRate||20.315,0,100)/100;
     const distributionMode=config.distributionMode||"reinvest";
-    const purchases=getPurchasePlan(rows,initial,monthly,day);
+    const purchases=getPurchasePlan(rows,initial,monthly,day,config.extraInvestments||[]);
 
     let units=0;
     let principal=0;
@@ -7635,7 +7635,7 @@ ${years}年以内に${yen(target)}へ到達する推定確率：${prob.probabili
 ${hitText}
 将来の指定追加投資：${prob.futureExtras.length}件・${yen(prob.futureExtras.reduce((s,x)=>s+x.amount,0))}
 
-Ver.27.2確率モデル：過去実績45%＋長期期待リターン40%（年率7%・ボラ22%）＋暴落ストレス15%を混合。過去実績成分は値動きの形だけを利用し、平均収益率は年率9%を上限として再中心化します。通常積立を毎月、−10/−15/−20/−25/−30/−40%の各段階の追加買付を1暴落局面につき1回だけ実行します。直近の好成績を10年先へそのまま外挿しない参考シミュレーションで、将来の成果を保証しません。`;
+Ver.27.3確率モデル：過去実績45%＋長期期待リターン40%（年率7%・ボラ22%）＋暴落ストレス15%を混合。過去実績成分は値動きの形だけを利用し、平均収益率は年率9%を上限として再中心化します。通常積立を毎月、−10/−15/−20/−25/−30/−40%の各段階の追加買付を1暴落局面につき1回だけ実行します。直近の好成績を10年先へそのまま外挿しない参考シミュレーションで、将来の成果を保証しません。`;
   }catch(error){
     console.error("暴落買いAIエラー",error);
     hero.innerHTML=`<div class="status bad">暴落買いAIエラー：${error.message}</div>`;
@@ -7655,7 +7655,8 @@ function runV25Dashboard(){
         day:+$("day").value||1,
         taxRate:+$("v25DistributionTax").value||20.315,
         distributionMode:$("v25DistributionMode").value,
-        riskStyle:$("v25RiskStyle").value
+        riskStyle:$("v25RiskStyle").value,
+        extraInvestments:getExtraInvestments()
       });
 
       last.v25=result;
@@ -7663,7 +7664,7 @@ function runV25Dashboard(){
       $("exportV25Pdf").disabled=false;
       status.className="status ok";
       renderCrashBuyAI();
-      status.textContent="Ver.27.2総合分析が完了しました。";
+      status.textContent="Ver.27.3総合分析が完了しました。";
     }catch(error){
       console.error("Ver.25総合分析エラー",error);
       status.className="status bad";
