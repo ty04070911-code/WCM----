@@ -12,15 +12,15 @@
   <meta name="apple-mobile-web-app-title" content="WCM Analyzer">
   <link rel="manifest" href="./manifest.json">
   <link rel="apple-touch-icon" href="./icon-192.svg">
-  <title>WCM Analyzer Pro Ver.26</title>
+  <title>WCM Analyzer Pro Ver.27</title>
 <link rel="stylesheet" href="./style.css?v=26">
 </head>
 <body>
 <main class="app">
 <header>
   <h1>WCM Analyzer Pro</h1>
-  <span class="badge">iPhone Edition Ver.26</span>
-  <p class="lead">Ver.26では、Ver.25の機能に加え、現在ドローダウン・今月の推奨買付・予想追加口数・目標資産到達確率を自動表示します。</p>
+  <span class="badge">iPhone Edition Ver.27</span>
+  <p class="lead">Ver.27では、Ver.26の暴落買いAIを改良し、過去実績45%＋長期期待40%＋暴落ストレス15%の混合モデルで目標到達確率を補正します。</p>
 </header>
 
 <section class="panel auto-data-panel">
@@ -78,7 +78,7 @@
     <button class="tab" data-page="outlook">今後の見通し</button>
     <button class="tab" data-page="forecast">将来予測</button>
     <button class="tab" data-page="selflearning">自己学習AI</button>
-    <button class="tab" data-page="v25dashboard">Ver.26総合</button>
+    <button class="tab" data-page="v25dashboard">Ver.27総合</button>
     <button class="tab" data-page="validation">精度検証</button>
     <button class="tab" data-page="regime">相場局面</button>
     <button class="tab" data-page="advisor">総合判断</button>
@@ -803,7 +803,7 @@
 
   <section id="v25dashboard" class="page" hidden>
     <div class="panel v25-hero">
-      <h2>WCM AI統合ダッシュボード Ver.26</h2>
+      <h2>WCM AI統合ダッシュボード Ver.27</h2>
       <p class="small">
         積立元本、実際の積立日、分配金再投資、普通分配・特別分配の推定、
         4期間予測、自己学習結果をまとめて参考判断を作成します。
@@ -832,7 +832,7 @@
       </div>
 
       <div class="grid">
-        <button id="runV25Dashboard" class="primary">Ver.26総合分析を実行</button>
+        <button id="runV25Dashboard" class="primary">Ver.27総合分析を実行</button>
         <button id="exportV25Pdf" class="green" disabled>分析結果をPDF保存</button>
       </div>
 
@@ -850,7 +850,7 @@
 
     <div class="panel crash-buy-panel">
       <h2>暴落買いAI・目標到達確率</h2>
-      <p class="small">分配の影響を除くため、原則として税引前分配金再投資基準価額の52週高値からドローダウンを計算します。買い増しは各下落段階で1回ずつ発動する前提です。</p>
+      <p class="small">分配の影響を除くため、原則として税引前分配金再投資基準価額の52週高値からドローダウンを計算します。到達確率は過去実績45%＋長期期待40%＋暴落ストレス15%の混合モデルです。</p>
       <div class="grid">
         <div class="field"><label>現在保有口数</label><input id="crashCurrentUnits" type="number" inputmode="numeric" min="0" step="1000" value="1818299"></div>
         <div class="field"><label>通常の毎月積立額</label><input id="crashBaseMonthly" type="number" inputmode="numeric" min="0" step="10000" value="30000"></div>
@@ -891,7 +891,7 @@
     </div>
 
     <div class="panel">
-      <h2>Ver.26総合レポート</h2>
+      <h2>Ver.27総合レポート</h2>
       <div id="v25Report" class="comment"></div>
     </div>
   </section>

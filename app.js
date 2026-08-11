@@ -7370,13 +7370,33 @@ const CrashBuyEngine=(()=>{
 
   function probability(rows,{units,baseMonthly,target,years,runs}){
     const state=currentState(rows);
-    const series=empiricalReturns(rows);
-    if(series.length<30)throw new Error("到達確率の計算に必要な日次データが不足しています。");
+    const empirical=empiricalReturns(rows);
+    if(empirical.length<30)throw new Error("到達確率の計算に必要な日次データが不足しています。");
     units=Math.max(0,Number(units)||0);
     baseMonthly=Math.max(0,Number(baseMonthly)||0);
     target=Math.max(1,Number(target)||3000000);
     years=Math.max(1,Math.floor(Number(years)||1));
     runs=Math.max(200,Math.floor(Number(runs)||3000));
+
+    // Ver.27 混合モデル:
+    // 45% 過去実績、40% 長期期待リターン、15% 暴落ストレス。
+    // 過去の好成績だけを100%再利用して到達確率が過度に楽観化するのを抑える。
+    const WEIGHTS={historical:.45,longTerm:.40,stress:.15};
+    const LONG_TERM_ANNUAL_RETURN=.07;      // 中立的な長期期待リターン 7%
+    const LONG_TERM_ANNUAL_VOL=.22;         // 年率ボラティリティ 22%
+    const dailyMu=Math.log(1+LONG_TERM_ANNUAL_RETURN)/252;
+    const dailySigma=LONG_TERM_ANNUAL_VOL/Math.sqrt(252);
+
+    function normal(rng){
+      const u1=Math.max(rng(),1e-12),u2=Math.max(rng(),1e-12);
+      return Math.sqrt(-2*Math.log(u1))*Math.cos(2*Math.PI*u2);
+    }
+    function stressReturn(rng){
+      // 通常日は長期モデル。ただし危機局面では連続した負のショックを発生させる。
+      // 1日だけの極端値ではなく、数週間〜数か月の下落を表現する。
+      return Math.exp(dailyMu+dailySigma*normal(rng))-1;
+    }
+
     const startValue=units*state.nav/10000;
     const startTR=state.currentTR;
     const tradingDays=years*252;
@@ -7385,24 +7405,50 @@ const CrashBuyEngine=(()=>{
     const hitDays=[];
 
     for(let k=0;k<runs;k++){
-      const rng=makeRng(2600000+k*7919);
+      const rng=makeRng(2700000+k*7919);
       let portfolio=startValue;
       let tr=startTR;
       let peak=Math.max(state.peakTR,tr);
       let fired=new Set();
       let hit=null;
+      let stressDays=0;
+      let stressDaily=0;
+
       for(let day=1;day<=tradingDays;day++){
-        const idx=Math.min(Math.floor(rng()*series.length),series.length-1);
-        const r=series[idx]||0;
+        let r;
+        if(stressDays>0){
+          r=stressReturn(rng)+stressDaily;
+          stressDays--;
+        }else{
+          const mode=rng();
+          if(mode<WEIGHTS.historical){
+            const idx=Math.min(Math.floor(rng()*empirical.length),empirical.length-1);
+            r=empirical[idx]||0;
+          }else if(mode<WEIGHTS.historical+WEIGHTS.longTerm){
+            r=Math.exp(dailyMu+dailySigma*normal(rng))-1;
+          }else{
+            // ストレス成分: 年1回前後の判定機会。発動時は累積 -15〜-35% 程度を
+            // 20〜60営業日に分散して与える。発動しない日は長期モデルを使用。
+            if(rng()<1/252){
+              const shock=.15+rng()*.20;
+              stressDays=20+Math.floor(rng()*41);
+              stressDaily=Math.pow(1-shock,1/Math.max(stressDays,1))-1;
+            }
+            r=stressReturn(rng)+(stressDays>0?stressDaily:0);
+            if(stressDays>0)stressDays--;
+          }
+
+          // 単日の異常値でシミュレーションが壊れないよう安全域を設定
+          r=clamp(r,-.20,.20);
+        }
+
         tr*=Math.max(1+r,.01);
         portfolio*=Math.max(1+r,.01);
-        if(tr>=peak){ peak=tr; fired=new Set(); }
+        if(tr>=peak){peak=tr;fired=new Set();}
         const dd=peak>0?(tr/peak-1)*100:0;
 
-        // 月1回の通常積立（21営業日ごと）
         if(day%21===0)portfolio+=baseMonthly;
 
-        // 下落段階を初めて跨いだ時だけ追加買付
         const depth=-dd;
         for(const tier of TIERS){
           if(depth>=tier.dd&&!fired.has(tier.dd)){
@@ -7423,7 +7469,8 @@ const CrashBuyEngine=(()=>{
       low:quantile(endings,.1),
       high:quantile(endings,.9),
       medianHitDays:hitDays.length?quantile(hitDays,.5):null,
-      runs,years,target,startValue
+      runs,years,target,startValue,
+      model:{weights:WEIGHTS,longTermAnnualReturn:LONG_TERM_ANNUAL_RETURN,longTermAnnualVol:LONG_TERM_ANNUAL_VOL}
     };
   }
 
@@ -7486,7 +7533,7 @@ function renderCrashBuyAI(){
 ${years}年以内に${yen(target)}へ到達する推定確率：${prob.probability.toFixed(1)}%
 ${hitText}
 
-確率計算はWCMの過去の日次トータルリターンをブートストラップし、通常積立を毎月、−10/−15/−20/−25/−30/−40%の各段階の追加買付を1暴落局面につき1回だけ実行した参考シミュレーションです。将来の成果を保証しません。`;
+Ver.27確率モデル：過去実績45%＋長期期待リターン40%（年率7%・ボラ22%）＋暴落ストレス15%を混合。通常積立を毎月、−10/−15/−20/−25/−30/−40%の各段階の追加買付を1暴落局面につき1回だけ実行します。過去の好成績だけで確率が過度に高くならないよう補正した参考シミュレーションで、将来の成果を保証しません。`;
   }catch(error){
     console.error("暴落買いAIエラー",error);
     hero.innerHTML=`<div class="status bad">暴落買いAIエラー：${error.message}</div>`;
